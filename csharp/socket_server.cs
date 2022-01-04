@@ -25,6 +25,15 @@ namespace Net {
         public int Size; // 一共发送Size个字节
     }
 
+    public class SocketCloseReason {
+        public const int MANUALLY_CLOSED = -1;
+        public const int CONNECT_FAILED = -2;
+        public const int CLOSED_BY_PEER = -3;
+        public const int READ_FAILED = -4;
+        public const int WRITE_FAILED = -5;
+        public const int SERVER_DESTROY = -6;
+    }
+
     public class SocketEvent {
 
         public void Clear() {
@@ -33,6 +42,7 @@ namespace Net {
             Array = null;
             Offset = 0;
             Size = 0;
+            CloseReason = 0;
             return;
         }
 
@@ -42,6 +52,7 @@ namespace Net {
             Array = null;
             Offset = 0;
             Size = 0;
+            CloseReason = 0;
             return this;
         }
 
@@ -51,6 +62,17 @@ namespace Net {
             Array = array;
             Offset = offset;
             Size = size;
+            CloseReason = 0;
+            return this;
+        }
+
+        public SocketEvent Reset(ulong id, System.Net.IPEndPoint address, int close_reason) {
+            Id = id;
+            Address = address;
+            Array = null;
+            Offset = 0;
+            Size = 0;
+            CloseReason = close_reason;
             return this;
         }
 
@@ -61,6 +83,7 @@ namespace Net {
         public byte[] Array { get; set; }
         public int Offset { get; set; }
         public int Size { get; set; }
+        public int CloseReason { get; set; }
     }
 
     public delegate void SocketEventCallback(SocketEvent evt);
@@ -134,7 +157,7 @@ namespace Net {
                 Socket socket = iter.Value;
 
                 Log.Logger.InfoFormat("socket is closed (server destroy): {0}", socket);
-                socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.SERVER_DESTROY));
                 socket_poll.Remove(socket.Fd);
                 SocketHelper.Close(socket.Fd);
             }
@@ -204,7 +227,7 @@ namespace Net {
                         if (!socket.Fd.Connected) {
                             // 没连上，直接关闭连接
                             Log.Logger.InfoFormat("socket connecting failed: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CONNECT_FAILED));
                             ForceClose(socket);
                             return;
                         }
@@ -219,13 +242,13 @@ namespace Net {
                         if (ret < 0) {
                             // 连接挂了，直接强制关闭连接
                             Log.Logger.InfoFormat("socket is closed (read failed): {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.READ_FAILED));
                             ForceClose(socket);
                             return;
                         } else if (ret == 0) {
                             // 客户端关闭了连接，先发送剩余数据，再关闭连接
                             Log.Logger.InfoFormat("socket is closed by remote: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CLOSED_BY_PEER));
                             FlushAll(socket);
                             ForceClose(socket);
                             return;
@@ -286,7 +309,7 @@ namespace Net {
                                 if (ret < 0) {
                                     // 连接挂了，关闭连接
                                     Log.Logger.InfoFormat("socket is closed (write failed): {0}", socket);
-                                    socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                                    socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.WRITE_FAILED));
                                     ForceClose(socket);
                                     return;
                                 } else if (ret == 0) {
@@ -308,7 +331,7 @@ namespace Net {
                         if (!socket.Fd.Connected) {
                             // 没连上，直接关闭连接
                             Log.Logger.InfoFormat("socket connecting failed: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CONNECT_FAILED));
                             ForceClose(socket);
                             return;
                         }
@@ -428,7 +451,7 @@ namespace Net {
             }
 
             Log.Logger.InfoFormat("socket is closed manully: {0}", socket);
-            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address));
+            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.MANUALLY_CLOSED));
             FlushAll(socket);
             ForceClose(socket);
         }
@@ -512,4 +535,5 @@ namespace Net {
     }
 
 }
+
 
