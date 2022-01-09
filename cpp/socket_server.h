@@ -21,6 +21,7 @@ public:
     struct SOCKET_ADDRESS {
         uint32_t IP;
         uint16_t PORT;
+        char IP_S[16];
     };
 
     enum SocketEventEnum {
