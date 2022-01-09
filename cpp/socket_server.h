@@ -18,10 +18,21 @@ public:
         const int SERVER_DESTROY = -6;
     };
 
+    struct SOCKET_ADDRESS {
+        uint32_t IP;
+        uint16_t PORT;
+    };
+
+    enum SocketEventEnum {
+        SOCKET_EVENT_OPEN,
+        SOCKET_EVENT_CLOSED,
+        SOCKET_EVENT_READ,
+    };
+
     struct SOCKET_EVENT {
+        SocketEventEnum EVENT;
         SOCKET_ID ID;
-        uint32_t ip;
-        uint16_t port;
+        SOCKET_ADDRESS *ADDR;
         const char *ARRAY;
         size_t OFFSET;
         size_t SIZE;
@@ -43,9 +54,9 @@ public:
 
     void Close(SOCKET_ID id, bool call_cb = true);
 
-    SOCKET_ID Connect(uint32_t ip, uint16_t port, SOCKET_EVENT_CALLBACK on_open, SOCKET_EVENT_CALLBACK on_close, SOCKET_EVENT_CALLBACK on_read);
+    SOCKET_ID Connect(uint32_t ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
 
-    SOCKET_ID Listen(uint32_t ip, uint16_t port, SOCKET_EVENT_CALLBACK on_open, SOCKET_EVENT_CALLBACK on_close, SOCKET_EVENT_CALLBACK on_read);
+    SOCKET_ID Listen(uint32_t ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
 };
 
 
