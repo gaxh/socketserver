@@ -26,15 +26,15 @@ public:
 
     enum SocketEventEnum {
         SOCKET_EVENT_OPEN,
-        SOCKET_EVENT_CLOSED,
+        SOCKET_EVENT_CLOSE,
         SOCKET_EVENT_READ,
     };
 
     struct SOCKET_EVENT {
         SocketEventEnum EVENT;
         SOCKET_ID ID;
-        SOCKET_ADDRESS *ADDR;
-        const char *ARRAY;
+        const SOCKET_ADDRESS *ADDR;
+        const void *ARRAY;
         size_t OFFSET;
         size_t SIZE;
         int CLOSE_REASON;
@@ -49,9 +49,9 @@ public:
 
     int Update();
 
-    void SendCopy(SOCKET_ID id, const char *array, size_t offset, size_t size);
+    void SendCopy(SOCKET_ID id, const void *array, size_t offset, size_t size);
 
-    void SendNocopy(SOCKET_ID id, const char *array, size_t offset, size_t size, std::function<void(const char *)> free_cb = NULL);
+    void SendNocopy(SOCKET_ID id, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
 
     void Close(SOCKET_ID id, bool call_cb = true, int close_reason = SOCKET_CLOSE_REASON::MANULLY_CLOSED);
 
@@ -66,6 +66,8 @@ public:
     SOCKET_ID Listen4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
 
     SOCKET_ID Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
+
+    void Loop();
 
 private:
     class IMPL;
