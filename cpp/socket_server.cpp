@@ -117,11 +117,12 @@ struct Socket {
     SocketStatusEnum STATUS;
     std::queue<SocketWriteBuffer> WRITE_LIST;
     SOCKET_EVENT_CALLBACK CB;
+    bool CLOSED = false;
     
     const char *Dump() {
         static char buffer[1024];
-        snprintf(buffer, sizeof(buffer), "(socket id=%llu,fd=%d,ip=%s,port=%hu,status=%s)",
-                ID, FD, ADDR.IP, ADDR.PORT, SocketStatusRepr(STATUS));
+        snprintf(buffer, sizeof(buffer), "(socket id=%llu,fd=%d,ip=%s,port=%hu,status=%s,v6=%d)",
+                ID, FD, ADDR.IP, ADDR.PORT, SocketStatusRepr(STATUS), ADDR.V6);
         return buffer;
     }
 
@@ -158,11 +159,12 @@ struct Socket {
             buffer.Free();
             WRITE_LIST.pop();
         }
+        CLOSED = true;
     }
 };
 
-
 // socket poller
+
 template<typename USERDATA_TYPE>
 class SocketServerPoller {
 public:
@@ -247,6 +249,7 @@ public:
 
         m_sockets.clear();
         m_poller.Destroy();
+        RecycleFinish();
     }
 
     int Update() {
@@ -257,15 +260,17 @@ public:
             Socket *so = e.UD;
 
             // read
-            if(e.READ) {
+            if(!so->CLOSED && e.READ) {
                 ProcessRead(so);
             }
 
             // write
-            if(e.WRITE) {
+            if(!so->CLOSED && e.WRITE) {
                 ProcessWrite(so);
             }
         }
+
+        RecycleFinish();
 
         return n;
     }
@@ -274,7 +279,7 @@ public:
         Socket *so = GetSocketObject(id);
 
         if(!so) {
-            SOCKET_SERVER_ERROR("failed to get socket object: %llu", id);
+            SOCKET_SERVER_ERROR("SendCopy: failed to get socket object: %llu", id);
             return;
         }
 
@@ -291,7 +296,7 @@ public:
         Socket *so = GetSocketObject(id);
 
         if(!so) {
-            SOCKET_SERVER_ERROR("failed to get socket object: %llu", id);
+            SOCKET_SERVER_ERROR("SendNocopy: failed to get socket object: %llu", id);
             if(free_cb) {
                 free_cb(array);
             }
@@ -311,7 +316,7 @@ public:
         Socket *so = GetSocketObject(id);
 
         if(!so) {
-            SOCKET_SERVER_ERROR("failed to get socket object: %llu", id);
+            SOCKET_SERVER_ERROR("Close: failed to get socket object: %llu", id);
             return;
         }
 
@@ -332,20 +337,20 @@ public:
         sa = MakeNetAddr(addr, &sa_size);
 
         if(!sa) {
-            SOCKET_SERVER_ERROR("failed to make sockaddr, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Connect: failed to make sockaddr, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
         if(fd == -1) {
-            SOCKET_SERVER_ERROR("failed to create socket, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Connect: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
         if(!MakeNonblocking(fd)) {
-            SOCKET_SERVER_ERROR("failed to set nonblocking, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Connect: failed to set nonblocking, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
@@ -358,7 +363,7 @@ public:
             SOCKET_ID id = NextSocketId();
 
             if(m_sockets.count(id)) {
-                SOCKET_SERVER_ERROR("alloced id has been used, ip=%s, port=%hu, error=%d",
+                SOCKET_SERVER_ERROR("Connect: alloced id has been used, ip=%s, port=%hu, error=%d",
                         addr.IP, addr.PORT, errno);
                 goto failed;
             }
@@ -371,12 +376,12 @@ public:
             so->CB = cb;
 
             m_sockets[id] = so;
-            m_poller.Add(fd, so, true, true);
+            m_poller.Add(fd, so, false, true);
 
             return id;
 
         } else {
-            SOCKET_SERVER_ERROR("failed to connect, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Connect: failed to connect, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
@@ -397,20 +402,20 @@ failed:
         sa = MakeNetAddr(addr, &sa_size);
 
         if(!sa) {
-            SOCKET_SERVER_ERROR("failed to make sockaddr, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Listen: failed to make sockaddr, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
         if(fd == -1) {
-            SOCKET_SERVER_ERROR("failed to create socket, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Listen: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
         if(!MakeNonblocking(fd)) {
-            SOCKET_SERVER_ERROR("failed to set nonblocking, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Listen: failed to set nonblocking, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
@@ -422,14 +427,14 @@ failed:
 
         ok = bind(fd, sa, sa_size);
         if(ok != 0) {
-            SOCKET_SERVER_ERROR("failed to bind address, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Listen: failed to bind address, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
         ok = listen(fd, 20);
         if(ok != 0) {
-            SOCKET_SERVER_ERROR("failed to listen, ip=%s, port=%hu, error=%d",
+            SOCKET_SERVER_ERROR("Listen: failed to listen, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
@@ -438,7 +443,7 @@ failed:
             SOCKET_ID id = NextSocketId();
 
             if(m_sockets.count(id)) {
-                SOCKET_SERVER_ERROR("alloced id has been used, ip=%s, port=%hu, error=%d",
+                SOCKET_SERVER_ERROR("Listen: alloced id has been used, ip=%s, port=%hu, error=%d",
                         addr.IP, addr.PORT, errno);
                 goto failed;
             }
@@ -471,6 +476,7 @@ private:
     SOCKET_EVENT m_event;
     uint32_t m_nextid;
     std::list<Socket *> m_recycle_cache;
+    char m_readbuffer[1024 * 1024 * 10];
 
 private:
     static void *CopyBuffer(const void *array, size_t offset, size_t size) {
@@ -589,7 +595,7 @@ private:
         }
 
         if(so->STATUS == SOCKET_STATUS_LISTENING) {
-            SOCKET_SERVER_ERROR("send buffer failed, socket is listening");
+            SOCKET_SERVER_ERROR("SendBuffer: send buffer failed, socket is listening");
             buffer.Free();
             return;
         }
@@ -622,11 +628,141 @@ private:
     }
 
     void ProcessRead(Socket *so) {
-    
+        switch(so->STATUS) {
+            case SOCKET_STATUS_LISTENING:
+                {
+                    int fd;
+                    SOCKET_ADDRESS addr;
+                    if(so->ADDR.V6) {
+                        static struct sockaddr_in6 sa;
+                        memset(&sa, 0, sizeof(sa));
+                        socklen_t slen = sizeof(sa);
+                        fd = accept(so->FD, (struct sockaddr *)&sa, &slen);
+
+                        if(fd == -1) {
+                            SOCKET_SERVER_ERROR("accept failed, socket=%s, error=%d", so->Dump(), errno);
+                            return;
+                        }
+
+                        addr.V6 = true;
+                        addr.PORT = ntohs(sa.sin6_port);
+                        inet_ntop(AF_INET6, &sa.sin6_addr, addr.IP, sizeof(addr.IP));
+                    } else {
+                        static struct sockaddr_in sa;
+                        memset(&sa, 0, sizeof(sa));
+                        socklen_t slen = sizeof(sa);
+                        fd = accept(so->FD, (struct sockaddr *)&sa, &slen);
+
+                        if(fd == -1) {
+                            SOCKET_SERVER_ERROR("accept failed, socket=%s, error=%d", so->Dump(), errno);
+                            return;
+                        }
+
+                        addr.V6 = false;
+                        addr.PORT = ntohs(sa.sin_port);
+                        inet_ntop(AF_INET, &sa.sin_addr, addr.IP, sizeof(addr.IP));
+                    }
+
+                    SOCKET_ID id = NextSocketId();
+
+                    if(m_sockets.count(id)) {
+                        SOCKET_SERVER_ERROR("Accept: alloced id has been used, socket=%s, ip=%s, port=%hu, error=%d",
+                                so->Dump(), addr.IP, addr.PORT, errno);
+                        close(fd);
+                        return;
+                    }
+
+                    Socket *ac_so = CreateSocketObject();
+                    ac_so->ID = id;
+                    ac_so->FD = fd;
+                    ac_so->ADDR = addr;
+                    ac_so->STATUS = SOCKET_STATUS_ACCEPTED;
+                    ac_so->CB = so->CB;
+
+                    m_sockets[id] = ac_so;
+                    m_poller.Add(fd, ac_so, true, false);
+
+                    ac_so->CB(MakeOpenEvent(ac_so->ID, &ac_so->ADDR));
+                }
+                break;
+            case SOCKET_STATUS_CONNECTING:
+                {
+                    SOCKET_SERVER_ERROR("Read: connecting status can not read, socket=%s", so->Dump());
+                    m_poller.Modify(so->FD, so, false, true);
+                }
+                break;
+            case SOCKET_STATUS_CONNECTED:
+            case SOCKET_STATUS_ACCEPTED:
+                {
+                    ssize_t recv_bytes = recv_nonblock(so->FD, m_readbuffer, 0, sizeof(m_readbuffer));
+
+                    if(recv_bytes < 0) {
+                        // 连接挂了
+                        SOCKET_SERVER_ERROR("Read: socket is closed (read failed), socket=%s", so->Dump());
+                        so->CB(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::READ_FAILED));
+                        ForceClose(so);
+                        return;
+                    } else if(recv_bytes > 0) {
+                        so->CB(MakeReadEvent(so->ID, &so->ADDR, m_readbuffer, 0, recv_bytes));
+                    }
+                }
+                break;
+            default:
+                {
+                    SOCKET_SERVER_ERROR("Read: invalid socket status, socket=%s, status=%d", so->Dump(), so->STATUS);
+                }
+                break;
+        }
     }
 
     void ProcessWrite(Socket *so) {
-    
+        switch(so->STATUS) {
+            case SOCKET_STATUS_LISTENING:
+                {
+                    SOCKET_SERVER_ERROR("Write: listening status can not write, socket=%s", so->Dump());
+                    m_poller.Modify(so->FD, so, true, false);
+                }
+                break;
+            case SOCKET_STATUS_ACCEPTED:
+            case SOCKET_STATUS_CONNECTED:
+                {
+                    while(so->WRITE_LIST.size()) {
+                        SocketWriteBuffer &buffer = so->WRITE_LIST.front();
+
+                        while(buffer.SIZE > 0) {
+                            ssize_t sent_bytes = send_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE);
+
+                            if(sent_bytes < 0) {
+                                SOCKET_SERVER_ERROR("Write: socket is closed (write failed), socket=%s", so->Dump());
+                                so->CB(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::WRITE_FAILED));
+                                ForceClose(so);
+                                return;
+                            } else if(sent_bytes == 0) {
+                                return;
+                            } else {
+                                buffer.OFFSET += sent_bytes;
+                                buffer.SIZE -= sent_bytes;
+                            }
+                        }
+
+                        buffer.Free();
+                        so->WRITE_LIST.pop();
+                    }
+
+                    m_poller.Modify(so->FD, so, true, false);
+                }
+                break;
+            case SOCKET_STATUS_CONNECTING:
+                {
+                    // TODO
+                }
+                break;
+            default:
+                {
+                    SOCKET_SERVER_ERROR("Write: invalid socket status, socket=%s, status=%d", so->Dump(), so->STATUS);
+                }
+                break;
+        }
     }
 };
 
