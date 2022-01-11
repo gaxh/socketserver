@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <functional>
+#include <string>
 
 class SocketServer {
 public:
@@ -31,6 +32,7 @@ public:
     };
 
     struct SOCKET_EVENT {
+        SocketServer *SERVER;
         SocketEventEnum EVENT;
         SOCKET_ID ID;
         const SOCKET_ADDRESS *ADDR;
@@ -67,12 +69,24 @@ public:
 
     SOCKET_ID Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
 
-    void Loop();
+    static std::string HexRepr(const void *buffer, size_t offset, size_t size);
 
 private:
     class IMPL;
     IMPL *m_impl = NULL;
 };
 
+class SocketServerLoop {
+public:
+    void Init(SocketServer *ss);
+    void Destroy();
+    void Loop();
+    void Exit();
+
+private:
+    SocketServer *m_ss = NULL;
+    bool m_exit = true;
+    static bool s_exit;
+};
 
 #endif

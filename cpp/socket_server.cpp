@@ -14,6 +14,10 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <list>
+#include <signal.h>
+#include <string>
+#include <sstream>
+#include <iomanip>
 
 #define SOCKET_SERVER_ERROR(fmt, args...) fprintf(stderr, "[%s:%d:%s]" fmt "\n", __FILE__, __LINE__, __FUNCTION__, ##args)
 
@@ -34,7 +38,7 @@ static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
 static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, size_t size) {
     ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, 0);
 
-    if(sent_bytes == EAGAIN || sent_bytes == EWOULDBLOCK) {
+    if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         return 0;
     }
 
@@ -44,11 +48,24 @@ static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, s
 static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t size) {
     ssize_t recv_bytes = recv(fd, (char *)buffer + offset, size, 0);
 
-    if(recv_bytes == EAGAIN || recv_bytes == EWOULDBLOCK) {
+    if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         return 0;
     }
 
     return recv_bytes;
+}
+
+static std::string hex_repr(const void *buffer, size_t offset, size_t size) {
+    std::ostringstream ss;
+    const char *array = (const char *)buffer;
+    for(size_t i = 0; i < size; ++i) {
+        ss << std::hex << std::setfill('0') << std::setw(2) << std::uppercase << (int)array[offset + i];
+
+        if(i + 1 < size) {
+            ss << " ";
+        }
+    }
+    return ss.str();
 }
 
 // socket event
@@ -127,8 +144,8 @@ struct Socket {
     }
 
     void DefaultCallback(const SOCKET_EVENT &e) {
-        SOCKET_SERVER_ERROR("default event: event=%s,id=%llu,ip=%s,port=%hu,size=%zu",
-                SocketEventRepr(e.EVENT), e.ID, e.ADDR->IP, e.ADDR->PORT, e.SIZE);
+        SOCKET_SERVER_ERROR("default event: event=%s,id=%llu,ip=%s,port=%hu,size=%zu,data=(%s),close_reason=%d",
+                SocketEventRepr(e.EVENT), e.ID, e.ADDR->IP, e.ADDR->PORT, e.SIZE, hex_repr(e.ARRAY, e.OFFSET, e.SIZE).c_str(), e.CLOSE_REASON);
     }
 
     void Flush() {
@@ -160,6 +177,14 @@ struct Socket {
             WRITE_LIST.pop();
         }
         CLOSED = true;
+    }
+    
+    void Callback(const SOCKET_EVENT &e) {
+        if(CB) {
+            CB(e);
+        } else {
+            DefaultCallback(e);
+        }
     }
 };
 
@@ -232,7 +257,8 @@ private:
 
 class SocketServer::IMPL {
 public:
-    void Init() {
+    void Init(SocketServer *server) {
+        m_server = server;
         m_poller.Init();
     }
 
@@ -242,7 +268,7 @@ public:
         for(auto iter = sockets_copied.begin(); iter != sockets_copied.end(); ++iter) {
             Socket *so = iter->second;
 
-            so->CB(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::SERVER_DESTROY));
+            so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::SERVER_DESTROY));
             so->Flush();
             ForceClose(so);
         }
@@ -250,6 +276,7 @@ public:
         m_sockets.clear();
         m_poller.Destroy();
         RecycleFinish();
+        m_server = NULL;
     }
 
     int Update() {
@@ -321,7 +348,7 @@ public:
         }
 
         if(call_cb) {
-            so->CB(MakeCloseEvent(so->ID, &so->ADDR, close_reason));
+            so->Callback(MakeCloseEvent(so->ID, &so->ADDR, close_reason));
         }
 
         so->Flush();
@@ -332,7 +359,7 @@ public:
         int fd = -1;
         const struct sockaddr *sa;
         size_t sa_size;
-        int ok;
+        int ret;
 
         sa = MakeNetAddr(addr, &sa_size);
 
@@ -355,9 +382,9 @@ public:
             goto failed;
         }
 
-        ok = connect(fd, sa, sa_size);
+        ret = connect(fd, sa, sa_size);
 
-        if(ok == 0 || ok == EINPROGRESS) {
+        if(ret == 0 || (ret != 0 && errno == EINPROGRESS)) {
             // 连接成功
 
             SOCKET_ID id = NextSocketId();
@@ -397,7 +424,7 @@ failed:
         int fd = -1;
         const struct sockaddr *sa;
         size_t sa_size;
-        int ok;
+        int ret;
 
         sa = MakeNetAddr(addr, &sa_size);
 
@@ -425,15 +452,15 @@ failed:
             setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         }
 
-        ok = bind(fd, sa, sa_size);
-        if(ok != 0) {
+        ret = bind(fd, sa, sa_size);
+        if(ret != 0) {
             SOCKET_SERVER_ERROR("Listen: failed to bind address, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
         }
 
-        ok = listen(fd, 20);
-        if(ok != 0) {
+        ret = listen(fd, 20);
+        if(ret != 0) {
             SOCKET_SERVER_ERROR("Listen: failed to listen, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
@@ -477,6 +504,7 @@ private:
     uint32_t m_nextid;
     std::list<Socket *> m_recycle_cache;
     char m_readbuffer[1024 * 1024 * 10];
+    SocketServer *m_server = NULL;
 
 private:
     static void *CopyBuffer(const void *array, size_t offset, size_t size) {
@@ -547,6 +575,7 @@ private:
     }
 
     const SOCKET_EVENT &MakeOpenEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr) {
+        m_event.SERVER = m_server;
         m_event.EVENT = SocketServer::SOCKET_EVENT_OPEN;
         m_event.ID = id;
         m_event.ADDR = addr;
@@ -559,6 +588,7 @@ private:
     }
 
     const SOCKET_EVENT &MakeReadEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr, const void *array, size_t offset, size_t size) {
+        m_event.SERVER = m_server;
         m_event.EVENT = SocketServer::SOCKET_EVENT_READ;
         m_event.ID = id;
         m_event.ADDR = addr;
@@ -571,6 +601,7 @@ private:
     }
 
     const SOCKET_EVENT &MakeCloseEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr, int close_reason) {
+        m_event.SERVER = m_server;
         m_event.EVENT = SocketServer::SOCKET_EVENT_CLOSE;
         m_event.ID = id;
         m_event.ADDR = addr;
@@ -595,7 +626,7 @@ private:
         }
 
         if(so->STATUS == SOCKET_STATUS_LISTENING) {
-            SOCKET_SERVER_ERROR("SendBuffer: send buffer failed, socket is listening");
+            SOCKET_SERVER_ERROR("SendBuffer: send buffer failed, socket is listening, socket=%s", so->Dump());
             buffer.Free();
             return;
         }
@@ -682,7 +713,7 @@ private:
                     m_sockets[id] = ac_so;
                     m_poller.Add(fd, ac_so, true, false);
 
-                    ac_so->CB(MakeOpenEvent(ac_so->ID, &ac_so->ADDR));
+                    ac_so->Callback(MakeOpenEvent(ac_so->ID, &ac_so->ADDR));
                 }
                 break;
             case SOCKET_STATUS_CONNECTING:
@@ -699,11 +730,18 @@ private:
                     if(recv_bytes < 0) {
                         // 连接挂了
                         SOCKET_SERVER_ERROR("Read: socket is closed (read failed), socket=%s", so->Dump());
-                        so->CB(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::READ_FAILED));
+                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::READ_FAILED));
                         ForceClose(so);
                         return;
-                    } else if(recv_bytes > 0) {
-                        so->CB(MakeReadEvent(so->ID, &so->ADDR, m_readbuffer, 0, recv_bytes));
+                    } else if(recv_bytes == 0) {
+                        // 对端关闭了连接
+                        SOCKET_SERVER_ERROR("READ: socket is closed by remote, socket=%s", so->Dump());
+                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::CLOSED_BY_PEER));
+                        so->Flush();
+                        ForceClose(so);
+                        return;
+                    } else {
+                        so->Callback(MakeReadEvent(so->ID, &so->ADDR, m_readbuffer, 0, recv_bytes));
                     }
                 }
                 break;
@@ -734,7 +772,7 @@ private:
 
                             if(sent_bytes < 0) {
                                 SOCKET_SERVER_ERROR("Write: socket is closed (write failed), socket=%s", so->Dump());
-                                so->CB(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::WRITE_FAILED));
+                                so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::WRITE_FAILED));
                                 ForceClose(so);
                                 return;
                             } else if(sent_bytes == 0) {
@@ -754,7 +792,23 @@ private:
                 break;
             case SOCKET_STATUS_CONNECTING:
                 {
-                    // TODO
+                    // 检测是否已成功连接上
+                    int buf;
+                    socklen_t buf_len = sizeof(buf);
+                    int ret = getpeername(so->FD, (struct sockaddr *)&buf, &buf_len);
+
+                    if(ret != 0) {
+                        SOCKET_SERVER_ERROR("Connect: connect failed, socket=%s, error=%d", so->Dump(), errno);
+                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::CONNECT_FAILED));
+                        ForceClose(so);
+                        return;
+                    }
+
+                    // 连接成功
+                    so->STATUS = SOCKET_STATUS_CONNECTED;
+                    so->Callback(MakeOpenEvent(so->ID, &so->ADDR));
+
+                    m_poller.Modify(so->FD, so, true, so->WRITE_LIST.size() != 0);
                 }
                 break;
             default:
@@ -771,7 +825,7 @@ private:
 void SocketServer::Init() {
     if(m_impl == NULL) {
         m_impl = new IMPL();
-        m_impl->Init();
+        m_impl->Init(this);
     }
 }
 
@@ -842,5 +896,37 @@ SOCKET_ID SocketServer::Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALL
     return Listen(addr, cb);
 }
 
+void SocketServerLoop::Init(SocketServer *ss) {
+    m_ss = ss;
+    m_exit = false;
+    s_exit = false;
 
+    signal(SIGPIPE, SIG_IGN);
+    signal(SIGINT, [](int s) { s_exit = true; });
+}
+
+void SocketServerLoop::Destroy() {
+    m_ss = NULL;
+    m_exit = true;
+}
+
+void SocketServerLoop::Loop() {
+    while(!m_exit && !s_exit) {
+        int n = m_ss->Update();
+
+        if(n <= 0) {
+            usleep(10000);
+        }
+    }
+}
+
+void SocketServerLoop::Exit() {
+    m_exit = true;
+}
+
+bool SocketServerLoop::s_exit = true;
+
+std::string SocketServer::HexRepr(const void *buffer, size_t offset, size_t size) {
+    return hex_repr(buffer, offset, size);
+}
 
