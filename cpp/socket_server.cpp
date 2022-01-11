@@ -58,8 +58,10 @@ static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t 
 static std::string hex_repr(const void *buffer, size_t offset, size_t size) {
     std::ostringstream ss;
     const char *array = (const char *)buffer;
+    char cbuffer[32];
     for(size_t i = 0; i < size; ++i) {
-        ss << std::hex << std::setfill('0') << std::setw(2) << std::uppercase << (int)array[offset + i];
+        snprintf(cbuffer, sizeof(cbuffer), "%02hhx", (unsigned char)array[offset + i]);
+        ss << cbuffer;
 
         if(i + 1 < size) {
             ss << " ";
