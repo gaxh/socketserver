@@ -7,7 +7,7 @@
 
 class SocketServer {
 public:
-    typedef uint64_t SOCKET_ID;
+    typedef unsigned long long SOCKET_ID;
     static constexpr SOCKET_ID INVALID_SOCKET_ID = 0;
     
     struct SOCKET_CLOSE_REASON {
