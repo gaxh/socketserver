@@ -38,7 +38,7 @@ static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
 static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, size_t size) {
     ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, 0);
 
-    if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
         return 0;
     }
 
@@ -48,7 +48,7 @@ static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, s
 static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t size) {
     ssize_t recv_bytes = recv(fd, (char *)buffer + offset, size, 0);
 
-    if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
         return 0;
     }
 
