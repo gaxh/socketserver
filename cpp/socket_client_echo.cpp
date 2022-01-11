@@ -14,7 +14,7 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
 
         snprintf(buffer, sizeof(buffer), "HELLO %d", n++);
         size_t size = strlen(buffer);
-        LOG("<ID=%llu> SEND: size=%zu, data=(%s)", e.ID, size, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str());
+        LOG("<ID=%llu> SEND: size=%zu, data=(%s)", e.ID, size, SocketServer::HexRepr(buffer, 0, size).c_str());
         e.SERVER->SendCopy(e.ID, buffer, 0, strlen(buffer));
     }
 }
