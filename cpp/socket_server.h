@@ -35,6 +35,7 @@ public:
         SocketServer *SERVER;
         SocketEventEnum EVENT;
         SOCKET_ID ID;
+        SOCKET_ID LISTENER_ID;
         const SOCKET_ADDRESS *ADDR;
         const void *ARRAY;
         size_t OFFSET;
@@ -43,6 +44,9 @@ public:
     };
     
     using SOCKET_EVENT_CALLBACK = typename std::function<void(const SOCKET_EVENT &e)>;
+
+public:
+    static std::string HexRepr(const void *buffer, size_t offset, size_t size);
 
 public:
     void Init();
@@ -68,8 +72,6 @@ public:
     SOCKET_ID Listen4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
 
     SOCKET_ID Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
-
-    static std::string HexRepr(const void *buffer, size_t offset, size_t size);
 
 private:
     class IMPL;

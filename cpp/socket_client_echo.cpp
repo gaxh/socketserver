@@ -10,11 +10,11 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
         static char buffer[1024];
         static int n = 0;
 
-        LOG("<ID=%llu> RECV size=%zu, data=(%s)", e.ID, e.SIZE, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str());
+        LOG("<ID=%llu, LID=%llu> RECV size=%zu, data=(%s)", e.ID, e.LISTENER_ID, e.SIZE, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str());
 
         snprintf(buffer, sizeof(buffer), "HELLO %d", n++);
         size_t size = strlen(buffer);
-        LOG("<ID=%llu> SEND: size=%zu, data=(%s)", e.ID, size, SocketServer::HexRepr(buffer, 0, size).c_str());
+        LOG("<ID=%llu, LID=%llu> SEND: size=%zu, data=(%s)", e.ID, e.LISTENER_ID, size, SocketServer::HexRepr(buffer, 0, size).c_str());
         e.SERVER->SendCopy(e.ID, buffer, 0, strlen(buffer));
     }
 }

@@ -27,6 +27,13 @@ using SOCKET_ADDRESS = SocketServer::SOCKET_ADDRESS;
 using SOCKET_EVENT = SocketServer::SOCKET_EVENT;
 using SOCKET_EVENT_CALLBACK = SocketServer::SOCKET_EVENT_CALLBACK;
 
+static union  {
+    struct sockaddr_in s4;
+    struct sockaddr_in6 s6;
+} sockaddr_in_all;
+
+static constexpr size_t SOCKADDR_BUFFER_SIZE = sizeof(sockaddr_in_all);
+
 static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
     char *ret = strncpy(dst, src, n);
     if(n > 0) {
@@ -69,6 +76,8 @@ static std::string hex_repr(const void *buffer, size_t offset, size_t size) {
     }
     return ss.str();
 }
+
+// struct sockaddr
 
 static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const SOCKET_ADDRESS &addr) {
     if(addr.V6) {
@@ -124,21 +133,6 @@ static inline bool extract_sockaddr(SOCKET_ADDRESS &addr, const struct sockaddr 
     return false;
 }
 
-// socket event
-
-static inline const char *SocketEventRepr(SocketServer::SocketEventEnum e) {
-    switch(e) {
-        case SocketServer::SOCKET_EVENT_OPEN:
-            return "OPEN";
-        case SocketServer::SOCKET_EVENT_CLOSE:
-            return "CLOSE";
-        case SocketServer::SOCKET_EVENT_READ:
-            return "READ";
-        default:
-            return "UNKNOWN";
-    }
-}
-
 // socket status
 
 enum SocketStatusEnum {
@@ -166,6 +160,33 @@ static inline const char *SocketStatusRepr(SocketStatusEnum s) {
     }
 }
 
+// socket event
+
+static inline const char *SocketEventRepr(SocketServer::SocketEventEnum e) {
+    switch(e) {
+        case SocketServer::SOCKET_EVENT_OPEN:
+            return "OPEN";
+        case SocketServer::SOCKET_EVENT_CLOSE:
+            return "CLOSE";
+        case SocketServer::SOCKET_EVENT_READ:
+            return "READ";
+        default:
+            return "UNKNOWN";
+    }
+}
+
+static inline void ResetSocketEvent(SOCKET_EVENT &e, SocketServer *server, SocketServer::SocketEventEnum event) {
+    e.SERVER = server;
+    e.EVENT = event;
+    e.ID = SocketServer::INVALID_SOCKET_ID;
+    e.ADDR = NULL;
+    e.ARRAY = NULL;
+    e.OFFSET = 0;
+    e.SIZE = 0;
+    e.CLOSE_REASON = 0;
+    e.LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
+}
+
 // write buffer
 
 struct SocketWriteBuffer {
@@ -191,6 +212,7 @@ struct Socket {
     std::queue<SocketWriteBuffer> WRITE_LIST;
     SOCKET_EVENT_CALLBACK CB;
     bool CLOSED = false;
+    SOCKET_ID LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
     
     std::string Dump() {
         char buffer[128];
@@ -324,7 +346,7 @@ public:
         for(auto iter = sockets_copied.begin(); iter != sockets_copied.end(); ++iter) {
             Socket *so = iter->second;
 
-            so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::SERVER_DESTROY));
+            so->Callback(MakeCloseEvent(so, SOCKET_CLOSE_REASON::SERVER_DESTROY));
             so->Flush();
             ForceClose(so);
         }
@@ -404,7 +426,7 @@ public:
         }
 
         if(call_cb) {
-            so->Callback(MakeCloseEvent(so->ID, &so->ADDR, close_reason));
+            so->Callback(MakeCloseEvent(so, close_reason));
         }
 
         so->Flush();
@@ -413,7 +435,7 @@ public:
 
     SOCKET_ID Connect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
-        char sa_buffer[1024];
+        char sa_buffer[SOCKADDR_BUFFER_SIZE];
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
         socklen_t sa_size = sizeof(sa_buffer);
         int ret;
@@ -477,7 +499,7 @@ failed:
 
     SOCKET_ID Listen(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
-        char sa_buffer[1024];
+        char sa_buffer[SOCKADDR_BUFFER_SIZE];
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
         socklen_t sa_size = sizeof(sa_buffer);
         int ret;
@@ -608,40 +630,37 @@ private:
         return ((SOCKET_ID)tv.tv_sec << 32) + (SOCKET_ID)(m_nextid++);
     }
 
-    const SOCKET_EVENT &MakeOpenEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr) {
-        m_event.SERVER = m_server;
-        m_event.EVENT = SocketServer::SOCKET_EVENT_OPEN;
-        m_event.ID = id;
-        m_event.ADDR = addr;
-        m_event.ARRAY = NULL;
-        m_event.OFFSET = 0;
-        m_event.SIZE = 0;
-        m_event.CLOSE_REASON = 0;
+    const SOCKET_EVENT &MakeOpenEvent(Socket *so) {
+        ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_OPEN);
+
+        m_event.ID = so->ID;
+        m_event.ADDR = &so->ADDR;
+        m_event.LISTENER_ID = so->LISTENER_ID;
 
         return m_event;
     }
 
-    const SOCKET_EVENT &MakeReadEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr, const void *array, size_t offset, size_t size) {
-        m_event.SERVER = m_server;
-        m_event.EVENT = SocketServer::SOCKET_EVENT_READ;
-        m_event.ID = id;
-        m_event.ADDR = addr;
+    const SOCKET_EVENT &MakeReadEvent(Socket *so, const void *array, size_t offset, size_t size) {
+        ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_READ);
+
+        m_event.ID = so->ID;
+        m_event.ADDR = &so->ADDR;
+        m_event.LISTENER_ID = so->LISTENER_ID;
+
         m_event.ARRAY = array;
         m_event.OFFSET = offset;
         m_event.SIZE = size;
-        m_event.CLOSE_REASON = 0;
 
         return m_event;
     }
 
-    const SOCKET_EVENT &MakeCloseEvent(SOCKET_ID id, const SOCKET_ADDRESS *addr, int close_reason) {
-        m_event.SERVER = m_server;
-        m_event.EVENT = SocketServer::SOCKET_EVENT_CLOSE;
-        m_event.ID = id;
-        m_event.ADDR = addr;
-        m_event.ARRAY = NULL;
-        m_event.OFFSET = 0;
-        m_event.SIZE = 0;
+    const SOCKET_EVENT &MakeCloseEvent(Socket *so, int close_reason) {
+        ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_CLOSE);
+
+        m_event.ID = so->ID;
+        m_event.ADDR = &so->ADDR;
+        m_event.LISTENER_ID = so->LISTENER_ID;
+
         m_event.CLOSE_REASON = close_reason;
 
         return m_event;
@@ -699,7 +718,7 @@ private:
                     int fd;
                     SOCKET_ADDRESS addr;
                      
-                    char sa_buffer[1024];
+                    char sa_buffer[SOCKADDR_BUFFER_SIZE];
                     socklen_t slen = sizeof(sa_buffer);
                     struct sockaddr *sa = (struct sockaddr *)sa_buffer;
 
@@ -730,11 +749,12 @@ private:
                     ac_so->ADDR = addr;
                     ac_so->STATUS = SOCKET_STATUS_ACCEPTED;
                     ac_so->CB = so->CB;
+                    ac_so->LISTENER_ID = so->ID;
 
                     m_sockets[id] = ac_so;
                     m_poller.Add(fd, ac_so, true, false);
 
-                    ac_so->Callback(MakeOpenEvent(ac_so->ID, &ac_so->ADDR));
+                    ac_so->Callback(MakeOpenEvent(ac_so));
                 }
                 break;
             case SOCKET_STATUS_CONNECTING:
@@ -751,18 +771,18 @@ private:
                     if(recv_bytes < 0) {
                         // 连接挂了
                         SOCKET_SERVER_ERROR("Read: socket is closed (read failed), socket=%s", so->Dump().c_str());
-                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::READ_FAILED));
+                        so->Callback(MakeCloseEvent(so, SOCKET_CLOSE_REASON::READ_FAILED));
                         ForceClose(so);
                         return;
                     } else if(recv_bytes == 0) {
                         // 对端关闭了连接
                         SOCKET_SERVER_ERROR("READ: socket is closed by remote, socket=%s", so->Dump().c_str());
-                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::CLOSED_BY_PEER));
+                        so->Callback(MakeCloseEvent(so, SOCKET_CLOSE_REASON::CLOSED_BY_PEER));
                         so->Flush();
                         ForceClose(so);
                         return;
                     } else {
-                        so->Callback(MakeReadEvent(so->ID, &so->ADDR, m_readbuffer, 0, recv_bytes));
+                        so->Callback(MakeReadEvent(so, m_readbuffer, 0, recv_bytes));
                     }
                 }
                 break;
@@ -793,7 +813,7 @@ private:
 
                             if(sent_bytes < 0) {
                                 SOCKET_SERVER_ERROR("Write: socket is closed (write failed), socket=%s", so->Dump().c_str());
-                                so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::WRITE_FAILED));
+                                so->Callback(MakeCloseEvent(so, SOCKET_CLOSE_REASON::WRITE_FAILED));
                                 ForceClose(so);
                                 return;
                             } else if(sent_bytes == 0) {
@@ -820,14 +840,14 @@ private:
 
                     if(ret != 0) {
                         SOCKET_SERVER_ERROR("Connect: connect failed, socket=%s, error=%d", so->Dump().c_str(), errno);
-                        so->Callback(MakeCloseEvent(so->ID, &so->ADDR, SOCKET_CLOSE_REASON::CONNECT_FAILED));
+                        so->Callback(MakeCloseEvent(so, SOCKET_CLOSE_REASON::CONNECT_FAILED));
                         ForceClose(so);
                         return;
                     }
 
                     // 连接成功
                     so->STATUS = SOCKET_STATUS_CONNECTED;
-                    so->Callback(MakeOpenEvent(so->ID, &so->ADDR));
+                    so->Callback(MakeOpenEvent(so));
 
                     m_poller.Modify(so->FD, so, true, so->WRITE_LIST.size() != 0);
                 }

@@ -6,13 +6,13 @@
 static void Event(const SocketServer::SOCKET_EVENT &e) {
     switch(e.EVENT) {
         case SocketServer::SOCKET_EVENT_OPEN:
-            LOG("Connected: id=%llu, ip=%s, port=%hu, v6=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6);
+            LOG("Connected: id=%llu, ip=%s, port=%hu, v6=%d, lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.LISTENER_ID);
             break;
         case SocketServer::SOCKET_EVENT_CLOSE:
-            LOG("Disconnected: id=%llu, ip=%s, port=%hu, v6=%d, reason=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.CLOSE_REASON);
+            LOG("Disconnected: id=%llu, ip=%s, port=%hu, v6=%d, reason=%d, lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.CLOSE_REASON, e.LISTENER_ID);
             break;
         case SocketServer::SOCKET_EVENT_READ:
-            LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s)", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str());
+            LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s), lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str(), e.LISTENER_ID);
             e.SERVER->SendCopy(e.ID, e.ARRAY, e.OFFSET, e.SIZE);
             break;
     }
