@@ -153,7 +153,7 @@ static inline bool extract_sockaddr(SOCKET_ADDRESS &addr, const struct sockaddr 
         addr.V6 = false;
         addr.PORT = ntohs(sa4->sin_port);
         inet_ntop(AF_INET, &sa4->sin_addr, addr.IP, sizeof(addr.IP));
-        
+
         return true;
     }
 
@@ -330,7 +330,7 @@ struct Socket {
         }
         CLOSED = true;
     }
-    
+
     void Callback(const SOCKET_EVENT &e) {
         if(CB) {
             CB(e);
@@ -782,14 +782,14 @@ failed:
         }
 
         SocketWriteBuffer buffer;
-        
+
         buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
         if(!make_sockaddr((struct sockaddr *)buffer.UDP_SA_BUFFER, &buffer.UDP_SA_BUFFER_LEN, to_addr)) {
             SOCKET_SERVER_ERROR("SendUdpCopy: make sockaddr failed, id=%llu, ip=%s, port=%hu, error=%d",
                     id, to_addr.IP, to_addr.PORT, errno);
             return;
         }
-        
+
         buffer.ARRAY = CopyBuffer(array, offset, size);
         buffer.OFFSET = 0;
         buffer.SIZE = size;
@@ -808,7 +808,7 @@ failed:
         }
 
         SocketWriteBuffer buffer;
-        
+
         buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
         if(!make_sockaddr((struct sockaddr *)buffer.UDP_SA_BUFFER, &buffer.UDP_SA_BUFFER_LEN, to_addr)) {
             SOCKET_SERVER_ERROR("SendUdpNocopy: make sockaddr failed, id=%llu, ip=%s, port=%hu, error=%d",
@@ -839,7 +839,7 @@ failed:
             buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
             memcpy(buffer.UDP_SA_BUFFER, to_udp_addr, buffer.UDP_SA_BUFFER_LEN);
         }
-        
+
         buffer.ARRAY = CopyBuffer(array, offset, size);
         buffer.OFFSET = 0;
         buffer.SIZE = size;
@@ -863,7 +863,7 @@ failed:
             buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
             memcpy(buffer.UDP_SA_BUFFER, to_udp_addr, buffer.UDP_SA_BUFFER_LEN);
         }
-        
+
         buffer.ARRAY = CopyBuffer(array, offset, size);
         buffer.OFFSET = 0;
         buffer.SIZE = size;
@@ -1005,7 +1005,7 @@ private:
         // 发送队列为空的话，先尝试发送一次
         if(so->WRITE_LIST.empty()) {
             if(so->UDP) {
-                ssize_t sent_bytes = sendto_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE, 
+                ssize_t sent_bytes = sendto_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE,
                         buffer.UDP_SA_BUFFER_LEN != 0 ? (struct sockaddr *)buffer.UDP_SA_BUFFER : NULL,
                         buffer.UDP_SA_BUFFER_LEN);
 
@@ -1048,7 +1048,7 @@ private:
                 {
                     int fd;
                     SOCKET_ADDRESS addr;
-                     
+
                     char sa_buffer[SOCKADDR_BUFFER_SIZE];
                     memset(sa_buffer, 0, sizeof(sa_buffer));
                     socklen_t slen = sizeof(sa_buffer);

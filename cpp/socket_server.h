@@ -9,7 +9,7 @@ class SocketServer {
 public:
     typedef unsigned long long SOCKET_ID;
     static constexpr SOCKET_ID INVALID_SOCKET_ID = 0;
-    
+
     struct SOCKET_CLOSE_REASON {
         static constexpr int MANULLY_CLOSED = -1;
         static constexpr int CONNECT_FAILED = -2;
@@ -46,7 +46,7 @@ public:
         const SOCKET_ADDRESS *FROM_ADDR;
         const UDP_IDENTIFIER *FROM_UDP_ID; // 这是个临时值，只能在收到数据的回调里使用，在回调外无效。可以调用 CopyUdpIdentifier 把它拷贝出来使用
     };
-    
+
     using SOCKET_EVENT_CALLBACK = typename std::function<void(const SOCKET_EVENT &e)>;
 
 public:

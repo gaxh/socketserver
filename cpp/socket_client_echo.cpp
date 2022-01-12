@@ -31,7 +31,7 @@ int main() {
     char buffer[1024];
 
     snprintf(buffer, sizeof(buffer), "BEGIN");
-    
+
     s.SendCopy(s4, buffer, 0, strlen(buffer));
     s.SendCopy(s6, buffer, 0, strlen(buffer));
 

@@ -20,14 +20,14 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
         /* send with cached target address
         e.SERVER->SendCopy(e.ID, buffer, 0, strlen(buffer));
         // */
-        
+
         /* send with copied udp identifier
         char addr_buffer[SocketServer::UDP_IDENTIFIER_SIZE];
         size_t addr_buffer_size = sizeof(addr_buffer);
         const SocketServer::UDP_IDENTIFIER *udp_addr = SocketServer::CopyUdpIdentifier(addr_buffer, &addr_buffer_size, e.FROM_UDP_ID);
         e.SERVER->SendUdpCopy(e.ID, udp_addr, buffer, 0, strlen(buffer));
         // */
-    
+
         //* send with converted identifier
         char addr_buffer[SocketServer::UDP_IDENTIFIER_SIZE];
         size_t addr_buffer_size = sizeof(addr_buffer);
@@ -58,7 +58,7 @@ int main() {
     char buffer[1024];
 
     snprintf(buffer, sizeof(buffer), "BEGIN");
-    
+
     s.SendCopy(s4, buffer, 0, strlen(buffer));
     s.SendCopy(s6, buffer, 0, strlen(buffer));
 
