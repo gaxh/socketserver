@@ -26,10 +26,11 @@ using SOCKET_CLOSE_REASON = SocketServer::SOCKET_CLOSE_REASON;
 using SOCKET_ADDRESS = SocketServer::SOCKET_ADDRESS;
 using SOCKET_EVENT = SocketServer::SOCKET_EVENT;
 using SOCKET_EVENT_CALLBACK = SocketServer::SOCKET_EVENT_CALLBACK;
+using UDP_IDENTIFIER = SocketServer::UDP_IDENTIFIER;
 
 static union  {
-    struct sockaddr_in s4;
-    struct sockaddr_in6 s6;
+    struct sockaddr_in SA4;
+    struct sockaddr_in6 SA6;
 } sockaddr_in_all;
 
 static constexpr size_t SOCKADDR_BUFFER_SIZE = sizeof(sockaddr_in_all);
@@ -62,6 +63,34 @@ static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t 
     return recv_bytes;
 }
 
+static inline ssize_t sendto_nonblock(int fd, const void *buffer, size_t offset, size_t size, struct sockaddr *to_addr, socklen_t to_addr_len) {
+    ssize_t sent_bytes = sendto(fd, (const char *)buffer + offset, size, 0, to_addr, to_addr_len);
+
+    if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        return 0;
+    }
+
+    if(sent_bytes < 0) {
+        SOCKET_SERVER_ERROR("call system sendto failed, error=%d", errno);
+    }
+
+    return sent_bytes;
+}
+
+static inline ssize_t recvfrom_nonblock(int fd, void *buffer, size_t offset, size_t size, struct sockaddr *from_addr, socklen_t *from_addr_len) {
+    ssize_t recv_bytes = recvfrom(fd, (char *)buffer + offset, size, 0, from_addr, from_addr_len);
+
+    if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR )) {
+        return 0;
+    }
+
+    if(recv_bytes < 0) {
+        SOCKET_SERVER_ERROR("call system recvfrom failed, error=%d", errno);
+    }
+
+    return recv_bytes;
+}
+
 static std::string hex_repr(const void *buffer, size_t offset, size_t size) {
     std::ostringstream ss;
     const char *array = (const char *)buffer;
@@ -88,7 +117,6 @@ static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const 
             return false;
         }
 
-        memset(sa6, 0, size);
         sa6->sin6_family = AF_INET6;
         sa6->sin6_port = htons(addr.PORT);
         int ret = inet_pton(AF_INET6, addr.IP, &sa6->sin6_addr);
@@ -102,7 +130,6 @@ static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const 
             return false;
         }
 
-        memset(sa4, 0, size);
         sa4->sin_family = AF_INET;
         sa4->sin_port = htons(addr.PORT);
         int ret = inet_pton(AF_INET, addr.IP, &sa4->sin_addr);
@@ -125,12 +152,39 @@ static inline bool extract_sockaddr(SOCKET_ADDRESS &addr, const struct sockaddr 
 
         addr.V6 = false;
         addr.PORT = ntohs(sa4->sin_port);
-        inet_ntop(AF_INET, &sa4->sin_port, addr.IP, sizeof(addr.IP));
+        inet_ntop(AF_INET, &sa4->sin_addr, addr.IP, sizeof(addr.IP));
         
         return true;
     }
 
     return false;
+}
+
+static inline const UDP_IDENTIFIER *copy_udp_identifier(void *buffer, size_t *size, const UDP_IDENTIFIER *udp_addr) {
+    if(*size < SocketServer::UDP_IDENTIFIER_SIZE || udp_addr == NULL) {
+        return NULL;
+    }
+    memcpy(buffer, udp_addr, SocketServer::UDP_IDENTIFIER_SIZE);
+    *size = SocketServer::UDP_IDENTIFIER_SIZE;
+    return (const UDP_IDENTIFIER *)buffer;
+}
+
+static inline const UDP_IDENTIFIER *make_udp_identifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr) {
+    if(*size < SocketServer::UDP_IDENTIFIER_SIZE) {
+        return NULL;
+    }
+
+    char sa_buffer[SocketServer::UDP_IDENTIFIER_SIZE];
+    memset(sa_buffer, 0, SocketServer::UDP_IDENTIFIER_SIZE);
+    socklen_t sa_size = sizeof(sa_buffer);
+
+    if(!make_sockaddr((struct sockaddr *)sa_buffer, &sa_size, addr)) {
+        return NULL;
+    }
+
+    *size = SocketServer::UDP_IDENTIFIER_SIZE;
+    memcpy(buffer, sa_buffer, SocketServer::UDP_IDENTIFIER_SIZE);
+    return (const UDP_IDENTIFIER *)buffer;
 }
 
 // socket status
@@ -141,6 +195,8 @@ enum SocketStatusEnum {
     SOCKET_STATUS_ACCEPTED,
     SOCKET_STATUS_CONNECTING,
     SOCKET_STATUS_CONNECTED,
+    SOCKET_STATUS_UDP_BIND,
+    SOCKET_STATUS_UDP_CONNECT,
 };
 
 static inline const char *SocketStatusRepr(SocketStatusEnum s) {
@@ -185,6 +241,8 @@ static inline void ResetSocketEvent(SOCKET_EVENT &e, SocketServer *server, Socke
     e.SIZE = 0;
     e.CLOSE_REASON = 0;
     e.LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
+    e.FROM_ADDR = NULL;
+    e.FROM_UDP_ID = NULL;
 }
 
 // write buffer
@@ -194,6 +252,8 @@ struct SocketWriteBuffer {
     size_t OFFSET = 0;
     size_t SIZE = 0;
     std::function<void(void *)> FREE;
+    char UDP_SA_BUFFER[SOCKADDR_BUFFER_SIZE]; // udp包的接收端
+    socklen_t UDP_SA_BUFFER_LEN = 0;
 
     void Free() {
         if(FREE) {
@@ -213,7 +273,8 @@ struct Socket {
     SOCKET_EVENT_CALLBACK CB;
     bool CLOSED = false;
     SOCKET_ID LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
-    
+    bool UDP = false;
+
     std::string Dump() {
         char buffer[128];
         snprintf(buffer, sizeof(buffer), "(socket id=%llu,fd=%d,ip=%s,port=%hu,status=%s,v6=%d)",
@@ -227,22 +288,35 @@ struct Socket {
     }
 
     void Flush() {
-        while(WRITE_LIST.size()) {
-            SocketWriteBuffer &buffer = WRITE_LIST.front();
+        if(UDP) {
+            while(WRITE_LIST.size()) {
+                SocketWriteBuffer &buffer = WRITE_LIST.front();
 
-            while(buffer.SIZE > 0) {
-                ssize_t sent_bytes = send_nonblock(FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE);
+                sendto_nonblock(FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE,
+                        buffer.UDP_SA_BUFFER_LEN != 0 ? (struct sockaddr *)buffer.UDP_SA_BUFFER : NULL,
+                        buffer.UDP_SA_BUFFER_LEN);
 
-                if(sent_bytes <= 0) {
-                    return;
+                buffer.Free();
+                WRITE_LIST.pop();
+            }
+        } else {
+            while(WRITE_LIST.size()) {
+                SocketWriteBuffer &buffer = WRITE_LIST.front();
+
+                while(buffer.SIZE > 0) {
+                    ssize_t sent_bytes = send_nonblock(FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE);
+
+                    if(sent_bytes <= 0) {
+                        return;
+                    }
+
+                    buffer.OFFSET += sent_bytes;
+                    buffer.SIZE -= sent_bytes;
                 }
 
-                buffer.OFFSET += sent_bytes;
-                buffer.SIZE -= sent_bytes;
+                buffer.Free();
+                WRITE_LIST.pop();
             }
-
-            buffer.Free();
-            WRITE_LIST.pop();
         }
     }
 
@@ -402,9 +476,7 @@ public:
 
         if(!so) {
             SOCKET_SERVER_ERROR("SendNocopy: failed to get socket object: %llu", id);
-            if(free_cb) {
-                free_cb(array);
-            }
+            if(free_cb) {free_cb(array);}
             return;
         }
 
@@ -436,6 +508,7 @@ public:
     SOCKET_ID Connect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
+        memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
         socklen_t sa_size = sizeof(sa_buffer);
         int ret;
@@ -500,6 +573,7 @@ failed:
     SOCKET_ID Listen(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
+        memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
         socklen_t sa_size = sizeof(sa_buffer);
         int ret;
@@ -569,6 +643,233 @@ failed:
             close(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
+    }
+
+    SOCKET_ID UdpBind(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+        int fd = -1;
+        char sa_buffer[SOCKADDR_BUFFER_SIZE];
+        memset(sa_buffer, 0, sizeof(sa_buffer));
+        struct sockaddr *sa = (struct sockaddr *)sa_buffer;
+        socklen_t sa_size = sizeof(sa_buffer);
+        int ret;
+
+        if(!make_sockaddr(sa, &sa_size, addr)) {
+            SOCKET_SERVER_ERROR("Udp Bind: failed to make sockaddr, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 0);
+        if(fd == -1) {
+            SOCKET_SERVER_ERROR("Udp Bind: failed to create socket, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        if(!MakeNonblocking(fd)) {
+            SOCKET_SERVER_ERROR("Udp Bind: failed to set nonblocking, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        {
+            int opt = 1;
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        }
+
+        ret = bind(fd, sa, sa_size);
+        if(ret != 0) {
+            SOCKET_SERVER_ERROR("Udp Bind: failed to bind address, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        {
+            SOCKET_ID id = NextSocketId();
+
+            if(m_sockets.count(id)) {
+                SOCKET_SERVER_ERROR("Udp Bind: alloced id has been used, ip=%s, port=%hu, error=%d",
+                        addr.IP, addr.PORT, errno);
+                goto failed;
+            }
+
+            Socket *so = CreateSocketObject();
+            so->ID = id;
+            so->FD = fd;
+            so->ADDR = addr;
+            so->STATUS = SOCKET_STATUS_UDP_BIND;
+            so->CB = cb;
+
+            m_sockets[id] = so;
+            m_poller.Add(fd, so, true, false);
+
+            return id;
+        }
+
+failed:
+        if(fd != -1) {
+            close(fd);
+        }
+        return SocketServer::INVALID_SOCKET_ID;
+    }
+
+    SOCKET_ID UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+        int fd = -1;
+        char sa_buffer[SOCKADDR_BUFFER_SIZE];
+        memset(sa_buffer, 0, sizeof(sa_buffer));
+        struct sockaddr *sa = (struct sockaddr *)sa_buffer;
+        socklen_t sa_size = sizeof(sa_buffer);
+        int ret;
+
+        if(!make_sockaddr(sa, &sa_size, addr)) {
+            SOCKET_SERVER_ERROR("Udp Connect: failed to make sockaddr, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 0);
+        if(fd == -1) {
+            SOCKET_SERVER_ERROR("Udp Connect: failed to create socket, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        if(!MakeNonblocking(fd)) {
+            SOCKET_SERVER_ERROR("Udp Connect: failed to set nonblocking, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+            goto failed;
+        }
+
+        ret = connect(fd, sa, sa_size);
+
+        if(ret == 0) {
+            SOCKET_ID id = NextSocketId();
+
+            if(m_sockets.count(id)) {
+                SOCKET_SERVER_ERROR("Udp Connect: alloced id has been used, ip=%s, port=%hu, error=%d",
+                        addr.IP, addr.PORT, errno);
+                goto failed;
+            }
+
+            Socket *so = CreateSocketObject();
+            so->ID = id;
+            so->FD = fd;
+            so->ADDR = addr;
+            so->STATUS = SOCKET_STATUS_UDP_CONNECT;
+            so->CB = cb;
+
+            m_sockets[id] = so;
+            m_poller.Add(fd, so, true, false);
+
+            return id;
+        } else {
+            SOCKET_SERVER_ERROR("Udp Connect: failed to connect, ip=%s, port=%hu, error=%d",
+                    addr.IP, addr.PORT, errno);
+        }
+failed:
+        if(fd != -1) {
+            close(fd);
+        }
+        return SocketServer::INVALID_SOCKET_ID;
+    }
+
+    void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SendUdpCopy: failed to get socket object: %llu", id);
+            return;
+        }
+
+        SocketWriteBuffer buffer;
+        
+        buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
+        if(!make_sockaddr((struct sockaddr *)buffer.UDP_SA_BUFFER, &buffer.UDP_SA_BUFFER_LEN, to_addr)) {
+            SOCKET_SERVER_ERROR("SendUdpCopy: make sockaddr failed, id=%llu, ip=%s, port=%hu, error=%d",
+                    id, to_addr.IP, to_addr.PORT, errno);
+            return;
+        }
+        
+        buffer.ARRAY = CopyBuffer(array, offset, size);
+        buffer.OFFSET = 0;
+        buffer.SIZE = size;
+        buffer.FREE = FreeBuffer;
+
+        SendBuffer(so, std::move(buffer));
+    }
+
+    void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SendUdpNocopy: failed to get socket object: %llu", id);
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
+        SocketWriteBuffer buffer;
+        
+        buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
+        if(!make_sockaddr((struct sockaddr *)buffer.UDP_SA_BUFFER, &buffer.UDP_SA_BUFFER_LEN, to_addr)) {
+            SOCKET_SERVER_ERROR("SendUdpNocopy: make sockaddr failed, id=%llu, ip=%s, port=%hu, error=%d",
+                    id, to_addr.IP, to_addr.PORT, errno);
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
+        buffer.ARRAY = array;
+        buffer.OFFSET = offset;
+        buffer.SIZE = size;
+        buffer.FREE = free_cb;
+
+        SendBuffer(so, std::move(buffer));
+    }
+
+    void SendUdpCopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, const void *array, size_t offset, size_t size) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SendUdpCopy: failed to get socket object: %llu", id);
+            return;
+        }
+
+        SocketWriteBuffer buffer;
+
+        if(to_udp_addr) {
+            buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
+            memcpy(buffer.UDP_SA_BUFFER, to_udp_addr, buffer.UDP_SA_BUFFER_LEN);
+        }
+        
+        buffer.ARRAY = CopyBuffer(array, offset, size);
+        buffer.OFFSET = 0;
+        buffer.SIZE = size;
+        buffer.FREE = FreeBuffer;
+
+        SendBuffer(so, std::move(buffer));
+    }
+
+    void SendUdpNocopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SendUdpNocopy: failed to get socket object: %llu", id);
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
+        SocketWriteBuffer buffer;
+
+        if(to_udp_addr) {
+            buffer.UDP_SA_BUFFER_LEN = sizeof(buffer.UDP_SA_BUFFER);
+            memcpy(buffer.UDP_SA_BUFFER, to_udp_addr, buffer.UDP_SA_BUFFER_LEN);
+        }
+        
+        buffer.ARRAY = CopyBuffer(array, offset, size);
+        buffer.OFFSET = 0;
+        buffer.SIZE = size;
+        buffer.FREE = FreeBuffer;
+
+        SendBuffer(so, std::move(buffer));
     }
 
 private:
@@ -666,6 +967,23 @@ private:
         return m_event;
     }
 
+    const SOCKET_EVENT &MakeUdpReadEvent(Socket *so, const void *array, size_t offset, size_t size, const SOCKET_ADDRESS *from_addr, const UDP_IDENTIFIER *from_udp_id) {
+        ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_READ);
+
+        m_event.ID = so->ID;
+        m_event.ADDR = &so->ADDR;
+        m_event.LISTENER_ID = so->LISTENER_ID;
+
+        m_event.ARRAY = array;
+        m_event.OFFSET = offset;
+        m_event.SIZE = size;
+
+        m_event.FROM_ADDR = from_addr;
+        m_event.FROM_UDP_ID = from_udp_id;
+
+        return m_event;
+    }
+
     Socket *GetSocketObject(SOCKET_ID id) {
         auto iter = m_sockets.find(id);
 
@@ -686,16 +1004,29 @@ private:
 
         // 发送队列为空的话，先尝试发送一次
         if(so->WRITE_LIST.empty()) {
-            ssize_t sent_bytes = send_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE);
+            if(so->UDP) {
+                ssize_t sent_bytes = sendto_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE, 
+                        buffer.UDP_SA_BUFFER_LEN != 0 ? (struct sockaddr *)buffer.UDP_SA_BUFFER : NULL,
+                        buffer.UDP_SA_BUFFER_LEN);
 
-            if(sent_bytes > 0) {
-                buffer.OFFSET += sent_bytes;
-                buffer.SIZE -= sent_bytes;
-
-                if(buffer.SIZE == 0) {
+                if(sent_bytes > 0) {
                     // 发送完了
                     buffer.Free();
                     return;
+                }
+
+            } else {
+                ssize_t sent_bytes = send_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE);
+
+                if(sent_bytes > 0) {
+                    buffer.OFFSET += sent_bytes;
+                    buffer.SIZE -= sent_bytes;
+
+                    if(buffer.SIZE == 0) {
+                        // 发送完了
+                        buffer.Free();
+                        return;
+                    }
                 }
             }
         }
@@ -719,6 +1050,7 @@ private:
                     SOCKET_ADDRESS addr;
                      
                     char sa_buffer[SOCKADDR_BUFFER_SIZE];
+                    memset(sa_buffer, 0, sizeof(sa_buffer));
                     socklen_t slen = sizeof(sa_buffer);
                     struct sockaddr *sa = (struct sockaddr *)sa_buffer;
 
@@ -786,6 +1118,26 @@ private:
                     }
                 }
                 break;
+            case SOCKET_STATUS_UDP_BIND:
+            case SOCKET_STATUS_UDP_CONNECT:
+                { // udp的接收
+                    char sa_buffer[SOCKADDR_BUFFER_SIZE];
+                    socklen_t sa_len = sizeof(sa_buffer);
+
+                    ssize_t recv_bytes = recvfrom_nonblock(so->FD, m_readbuffer, 0, sizeof(m_readbuffer), (struct sockaddr *)sa_buffer, &sa_len);
+
+                    if(recv_bytes > 0) {
+                        SOCKET_ADDRESS addr;
+
+                        if(!extract_sockaddr(addr, (const struct sockaddr *)sa_buffer, sa_len)) {
+                            SOCKET_SERVER_ERROR("UDP READ: extract sockaddr failed, socket=%s", so->Dump().c_str());
+                            return;
+                        }
+
+                        so->Callback(MakeUdpReadEvent(so, m_readbuffer, 0, recv_bytes, &addr, (const UDP_IDENTIFIER *)sa_buffer));
+                    }
+                }
+                break;
             default:
                 {
                     SOCKET_SERVER_ERROR("Read: invalid socket status, socket=%s, status=%d", so->Dump().c_str(), so->STATUS);
@@ -850,6 +1202,29 @@ private:
                     so->Callback(MakeOpenEvent(so));
 
                     m_poller.Modify(so->FD, so, true, so->WRITE_LIST.size() != 0);
+                }
+                break;
+            case SOCKET_STATUS_UDP_BIND:
+            case SOCKET_STATUS_UDP_CONNECT:
+                { // udp的发送
+                    while(so->WRITE_LIST.size()) {
+                        SocketWriteBuffer &buffer = so->WRITE_LIST.front();
+
+                        ssize_t sent_bytes = sendto_nonblock(so->FD, buffer.ARRAY, buffer.OFFSET, buffer.SIZE,
+                                buffer.UDP_SA_BUFFER_LEN != 0 ? (struct sockaddr *)buffer.UDP_SA_BUFFER : NULL,
+                                buffer.UDP_SA_BUFFER_LEN);
+
+                        if(sent_bytes == 0) {
+                            // 没发出去，也没出错，大概是底层buffer满了，等下次再发
+                            return;
+                        }
+                        // 出错就不管了，udp不在乎发不发得出去
+
+                        buffer.Free();
+                        so->WRITE_LIST.pop();
+                    }
+
+                    m_poller.Modify(so->FD, so, true, false);
                 }
                 break;
             default:
@@ -936,6 +1311,42 @@ SOCKET_ID SocketServer::Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALL
 
     return Listen(addr, cb);
 }
+
+SOCKET_ID SocketServer::UdpBind(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    return m_impl->UdpBind(addr, cb);
+}
+
+SOCKET_ID SocketServer::UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    return m_impl->UdpConnect(addr, cb);
+}
+
+void SocketServer::SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size) {
+    m_impl->SendUdpCopy(id, to_addr, array, offset, size);
+}
+
+void SocketServer::SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+    m_impl->SendUdpNocopy(id, to_addr, array, offset, size, free_cb);
+}
+
+void SocketServer::SendUdpCopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, const void *array, size_t offset, size_t size) {
+    m_impl->SendUdpCopy(id, to_udp_addr, array, offset, size);
+}
+
+void SocketServer::SendUdpNocopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+    m_impl->SendUdpNocopy(id, to_udp_addr, array, offset, size, free_cb);
+}
+
+const UDP_IDENTIFIER *SocketServer::CopyUdpIdentifier(void *buffer, size_t *size, const UDP_IDENTIFIER *udp_addr) {
+    return copy_udp_identifier(buffer, size, udp_addr);
+}
+
+const UDP_IDENTIFIER *SocketServer::MakeUdpIdentifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr) {
+    return make_udp_identifier(buffer, size, addr);
+}
+
+const size_t SocketServer::UDP_IDENTIFIER_SIZE = SOCKADDR_BUFFER_SIZE;
+
+// socket server loop
 
 void SocketServerLoop::Init(SocketServer *ss) {
     m_ss = ss;
