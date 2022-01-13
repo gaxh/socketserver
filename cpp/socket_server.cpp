@@ -765,6 +765,7 @@ failed:
         } else {
             SOCKET_SERVER_ERROR("Udp Connect: failed to connect, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
+            goto failed;
         }
 failed:
         if(fd != -1) {
