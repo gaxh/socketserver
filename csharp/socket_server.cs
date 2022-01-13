@@ -624,6 +624,7 @@ namespace Net
             SOCKETS.Socket fd = new SOCKETS.Socket(local.AddressFamily, SOCKETS.SocketType.Dgram, SOCKETS.ProtocolType.Udp);
             fd.SetSocketOption(SOCKETS.SocketOptionLevel.Socket, SOCKETS.SocketOptionName.ReuseAddress, true);
             fd.Blocking = false;
+            SocketHelper.UdpSetIgnoreError10054(fd);
 
             if (!SocketHelper.Bind(fd, local)) {
                 SocketHelper.Close(fd);
@@ -656,6 +657,7 @@ namespace Net
         public ulong UdpConnect(System.Net.IPEndPoint remote, SocketEventCallback cb) {
             SOCKETS.Socket fd = new SOCKETS.Socket(remote.AddressFamily, SOCKETS.SocketType.Dgram, SOCKETS.ProtocolType.Udp);
             fd.Blocking = false;
+            SocketHelper.UdpSetIgnoreError10054(fd);
 
             if (!SocketHelper.Connect(fd, remote)) {
                 SocketHelper.Close(fd);
@@ -781,6 +783,7 @@ namespace Net
         static bool s_exit = true;
     }
 }
+
 
 
 

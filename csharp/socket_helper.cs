@@ -137,7 +137,17 @@ namespace Net
                 return -1;
             }
         }
+
+        public static void UdpSetIgnoreError10054(SOCKETS.Socket fd) {
+            try {
+                const int SIP_UDP_CONNRESET = -1744830452;
+                fd.IOControl(SIP_UDP_CONNRESET, new byte[] { 0, 0, 0, 0 }, null);
+            } catch (System.Exception e) {
+                Log.Logger.ErrorFormat("udp ignore error 10054 failed: {0}\n{1}", e.Message, e.StackTrace);
+            }
+        }
     }
 }
+
 
 
