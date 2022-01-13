@@ -455,6 +455,10 @@ public:
     }
 
     void SendCopy(SOCKET_ID id, const void *array, size_t offset, size_t size) {
+        if(size == 0) {
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -472,6 +476,11 @@ public:
     }
 
     void SendNocopy(SOCKET_ID id, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+        if(size == 0) {
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -777,6 +786,10 @@ failed:
     }
 
     void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size) {
+        if(size == 0) {
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -802,6 +815,11 @@ failed:
     }
 
     void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+        if(size == 0) {
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -829,6 +847,10 @@ failed:
     }
 
     void SendUdpCopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, const void *array, size_t offset, size_t size) {
+        if(size == 0) {
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -852,6 +874,11 @@ failed:
     }
 
     void SendUdpNocopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+        if(size == 0) {
+            if(free_cb) {free_cb(array);}
+            return;
+        }
+
         Socket *so = GetSocketObject(id);
 
         if(!so) {
