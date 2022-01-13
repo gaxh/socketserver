@@ -1390,6 +1390,7 @@ void SocketServerLoop::Init(SocketServer *ss) {
 void SocketServerLoop::Destroy() {
     m_ss = NULL;
     m_exit = true;
+    s_exit = true;
 }
 
 void SocketServerLoop::Loop() {
