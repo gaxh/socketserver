@@ -58,7 +58,7 @@ namespace Net
         }
 
         public int Poll(Result[] results, int max) {
-            
+
 
             foreach (var iter in events) {
                 PollEvent evt = iter.Value;

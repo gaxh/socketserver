@@ -39,7 +39,7 @@ namespace Net
         public const int POLL_ERROR = -7;
     }
 
-    public enum SocketEventEnum { 
+    public enum SocketEventEnum {
         OPEN,
         CLOSE,
         READ,
