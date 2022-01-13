@@ -397,6 +397,11 @@ public:
             E.UD = (USERDATA_TYPE *)e.data.ptr;
             E.READ = (e.events & EPOLLIN) != 0;
             E.WRITE = (e.events & EPOLLOUT) != 0;
+
+            if(e.events & (EPOLLHUP | EPOLLERR)) {
+                E.READ = true;
+                E.WRITE = true;
+            }
         }
         return n;
     }
