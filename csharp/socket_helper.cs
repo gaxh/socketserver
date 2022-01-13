@@ -1,7 +1,9 @@
 using SOCKETS = System.Net.Sockets;
 
-namespace Net {
-    public class SocketHelper {
+namespace Net
+{
+    public class SocketHelper
+    {
 
         public static bool Bind(SOCKETS.Socket fd, System.Net.EndPoint address) {
             try {
@@ -23,9 +25,9 @@ namespace Net {
             }
         }
 
-        public static bool Select(System.Collections.IList readlist, System.Collections.IList writelist) {
+        public static bool Select(System.Collections.IList readlist, System.Collections.IList writelist, System.Collections.IList errorlist) {
             try {
-                SOCKETS.Socket.Select(readlist, writelist, null, 0);
+                SOCKETS.Socket.Select(readlist, writelist, errorlist, 0);
                 return true;
             } catch (SOCKETS.SocketException e) {
                 Log.Logger.ErrorFormat("call socket.select failed ({0}): {1}\n{2}", e.ErrorCode, e.Message, e.StackTrace);
@@ -62,7 +64,7 @@ namespace Net {
             try {
                 ret = fd.Receive(array, offset, size, SOCKETS.SocketFlags.None, out error);
             } catch (SOCKETS.SocketException e) {
-                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.InProgress) {
+                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.Interrupted) {
                     return 0;
                 }
                 Log.Logger.ErrorFormat("call socket.receive failed ({0}): {1}\n{2}", e.ErrorCode, e.Message, e.StackTrace);
@@ -82,7 +84,7 @@ namespace Net {
             try {
                 ret = fd.Send(array, offset, size, SOCKETS.SocketFlags.None, out error);
             } catch (SOCKETS.SocketException e) {
-                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.InProgress) {
+                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.Interrupted) {
                     return 0;
                 }
                 Log.Logger.ErrorFormat("call socket.send failed ({0}): {1}\n{2}", e.ErrorCode, e.Message, e.StackTrace);
@@ -112,6 +114,30 @@ namespace Net {
             }
         }
 
+        public static int SendTo(SOCKETS.Socket fd, byte[] array, int offset, int size, System.Net.EndPoint addr) {
+            try {
+                return fd.SendTo(array, offset, size, SOCKETS.SocketFlags.None, addr != null ? addr : fd.RemoteEndPoint);
+            } catch (SOCKETS.SocketException e) {
+                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.Interrupted) {
+                    return 0;
+                }
+                Log.Logger.ErrorFormat("call socket.sendto failed ({0}): {1}\n{2}", e.ErrorCode, e.Message, e.StackTrace);
+                return -1;
+            }
+        }
+
+        public static int ReceiveFrom(SOCKETS.Socket fd, byte[] array, int offset, int size, ref System.Net.EndPoint addr) {
+            try {
+                return fd.ReceiveFrom(array, offset, size, SOCKETS.SocketFlags.None, ref addr);
+            } catch (SOCKETS.SocketException e) {
+                if (e.SocketErrorCode == SOCKETS.SocketError.WouldBlock || e.SocketErrorCode == SOCKETS.SocketError.Interrupted) {
+                    return 0;
+                }
+                Log.Logger.ErrorFormat("call socket.receivefrom failed ({0}): {1}\n{2}", e.ErrorCode, e.Message, e.StackTrace);
+                return -1;
+            }
+        }
     }
 }
+
 

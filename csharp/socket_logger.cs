@@ -1,15 +1,10 @@
-namespace Net {
-    public class Log {
+namespace Net
+{
+    public class Log
+    {
 
-        public class LoggerType {
-            public void InfoFormat(string format, params object[] args) {
-                System.Console.WriteLine("[INFO] " + SafeStringFormat(format, args));
-            }
-
-            public void ErrorFormat(string format, params object[] args) {
-                System.Console.WriteLine("[ERROR] " + SafeStringFormat(format, args));
-            }
-
+        public class LoggerType
+        {
             static string SafeStringFormat(string format, params object[] args) {
                 try {
                     return string.Format(format, args);
@@ -17,9 +12,20 @@ namespace Net {
                     return "(format_failed)" + format;
                 }
             }
+
+            public delegate void LogCallback(string format, params object[] args);
+
+            public LogCallback InfoFormat = (format, args) => {
+                System.Console.WriteLine("[INFO] " + SafeStringFormat(format, args));
+            };
+
+            public LogCallback ErrorFormat = (format, args) => {
+                System.Console.WriteLine("[ERROR] " + SafeStringFormat(format, args));
+            };
         }
 
         public static LoggerType Logger = new LoggerType();
 
     }
 }
+

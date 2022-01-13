@@ -1,19 +1,23 @@
 using GENERIC = System.Collections.Generic;
 using SOCKETS = System.Net.Sockets;
 
-namespace Net {
+namespace Net
+{
+    public class SocketPoller<USERDATA_TYPE>
+    {
 
-    public class SocketPoll {
-
-        public class Result {
-            public ulong Id;
+        public class Result
+        {
+            public USERDATA_TYPE Userdata;
             public bool Read;
             public bool Write;
+            public bool Error;
         }
 
-        class PollEvent {
+        class PollEvent
+        {
             public SOCKETS.Socket Fd;
-            public ulong Id;
+            public USERDATA_TYPE Userdata;
             public bool Read;
             public bool Write;
         }
@@ -26,12 +30,12 @@ namespace Net {
             events.Clear();
         }
 
-        public void Add(SOCKETS.Socket fd, ulong id, bool read, bool write) {
+        public void Add(SOCKETS.Socket fd, USERDATA_TYPE userdata, bool read, bool write) {
             Assert.RuntimeAssert(fd != null, "fd is in events");
 
             events.Add(fd, new PollEvent() {
                 Fd = fd,
-                Id = id,
+                Userdata = userdata,
                 Read = read,
                 Write = write,
             });
@@ -43,19 +47,18 @@ namespace Net {
             events.Remove(fd);
         }
 
-        public void Modify(SOCKETS.Socket fd, ulong id, bool read, bool write) {
+        public void Modify(SOCKETS.Socket fd, USERDATA_TYPE userdata, bool read, bool write) {
             PollEvent evt = GetPollEvent(fd);
 
             Assert.RuntimeAssert(evt != null, "fd is not in events");
 
-            evt.Id = id;
+            evt.Userdata = userdata;
             evt.Read = read;
             evt.Write = write;
         }
 
         public int Poll(Result[] results, int max) {
-            GENERIC.List<SOCKETS.Socket> readlist = new GENERIC.List<SOCKETS.Socket>();
-            GENERIC.List<SOCKETS.Socket> writelist = new GENERIC.List<SOCKETS.Socket>();
+            
 
             foreach (var iter in events) {
                 PollEvent evt = iter.Value;
@@ -64,16 +67,19 @@ namespace Net {
                     readlist.Add(evt.Fd);
                 }
 
+
                 if (evt.Write) {
                     writelist.Add(evt.Fd);
                 }
+
+                errorlist.Add(evt.Fd);
             }
 
-            if (readlist.Count <= 0 && writelist.Count <= 0) {
+            if (readlist.Count <= 0 && writelist.Count <= 0 && errorlist.Count <= 0) {
                 return 0;
             }
 
-            if (!SocketHelper.Select(readlist, writelist)) {
+            if (!SocketHelper.Select(readlist, writelist, errorlist)) {
                 return -1;
             }
 
@@ -85,9 +91,10 @@ namespace Net {
                 if (evt != null) {
                     Result result = results[n++];
 
-                    result.Id = evt.Id;
+                    result.Userdata = evt.Userdata;
                     result.Read = true;
                     result.Write = false;
+                    result.Error = false;
                 }
             }
 
@@ -97,11 +104,29 @@ namespace Net {
                 if (evt != null) {
                     Result result = results[n++];
 
-                    result.Id = evt.Id;
+                    result.Userdata = evt.Userdata;
                     result.Read = false;
                     result.Write = true;
+                    result.Error = false;
                 }
             }
+
+            for (int i = 0; i < errorlist.Count && n < max; ++i) {
+                PollEvent evt = GetPollEvent(errorlist[i]);
+
+                if (evt != null) {
+                    Result result = results[n++];
+
+                    result.Userdata = evt.Userdata;
+                    result.Read = false;
+                    result.Write = false;
+                    result.Error = true;
+                }
+            }
+
+            readlist.Clear();
+            writelist.Clear();
+            errorlist.Clear();
 
             return n;
         }
@@ -111,7 +136,10 @@ namespace Net {
         }
 
         GENERIC.Dictionary<SOCKETS.Socket, PollEvent> events = new GENERIC.Dictionary<SOCKETS.Socket, PollEvent>();
+        GENERIC.List<SOCKETS.Socket> readlist = new GENERIC.List<SOCKETS.Socket>();
+        GENERIC.List<SOCKETS.Socket> writelist = new GENERIC.List<SOCKETS.Socket>();
+        GENERIC.List<SOCKETS.Socket> errorlist = new GENERIC.List<SOCKETS.Socket>();
     }
-
 }
+
 

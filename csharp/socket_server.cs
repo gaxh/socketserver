@@ -1,133 +1,153 @@
 using GENERIC = System.Collections.Generic;
 using SOCKETS = System.Net.Sockets;
-using Log = Net.Log;
+using Log = global::Net.Log;
 
-namespace Net {
+namespace Net
+{
 
-    class Const {
+    class Const
+    {
         public const ulong InvalidSocketId = 0;
-
-        public static bool IsValidSocketId(ulong id) {
-            return id != InvalidSocketId;
-        }
     }
 
-    enum SocketStatusEnum {
+    enum SocketStatusEnum
+    {
         Listening, // 服务器监听连接
         Accepted, // 服务器获得的客户端连接
         Connecting, // 客户端正在连接
         Connected, // 客户端已连接
+        UDP_BIND, // udp已绑定
+        UDP_CONNECT, // udp已连接
     }
 
-    class WriteBuffer {
+    class WriteBuffer
+    {
         public byte[] Array;
         public int Offset; // 从第Offset个字节开始发送
         public int Size; // 一共发送Size个字节
+        public System.Net.EndPoint UdpAddr; // udp目标地址
     }
 
-    public class SocketCloseReason {
+    public class SocketCloseReason
+    {
         public const int MANUALLY_CLOSED = -1;
         public const int CONNECT_FAILED = -2;
         public const int CLOSED_BY_PEER = -3;
         public const int READ_FAILED = -4;
         public const int WRITE_FAILED = -5;
         public const int SERVER_DESTROY = -6;
+        public const int POLL_ERROR = -7;
     }
 
-    public class SocketEvent {
+    public enum SocketEventEnum { 
+        OPEN,
+        CLOSE,
+        READ,
+    }
 
-        public void Clear() {
-            Id = 0;
+    public class SocketEvent
+    {
+
+        public void Reset(SocketServer server, SocketEventEnum event_) {
+            Server = server;
+            Event = event_;
+            Id = Const.InvalidSocketId;
             Address = null;
             Array = null;
             Offset = 0;
             Size = 0;
             CloseReason = 0;
-            return;
+            ListenerId = Const.InvalidSocketId;
+            FromAddress = null;
         }
 
-        public SocketEvent Reset(ulong id, System.Net.IPEndPoint address) {
-            Id = id;
-            Address = Address;
-            Array = null;
-            Offset = 0;
-            Size = 0;
-            CloseReason = 0;
-            return this;
-        }
-
-        public SocketEvent Reset(ulong id, System.Net.IPEndPoint address, byte[] array, int offset, int size) {
-            Id = id;
-            Address = address;
-            Array = array;
-            Offset = offset;
-            Size = size;
-            CloseReason = 0;
-            return this;
-        }
-
-        public SocketEvent Reset(ulong id, System.Net.IPEndPoint address, int close_reason) {
-            Id = id;
-            Address = address;
-            Array = null;
-            Offset = 0;
-            Size = 0;
-            CloseReason = close_reason;
-            return this;
-        }
-
-        public ulong Id { get; private set; }
-        public System.Net.IPEndPoint Address { get; private set; }
+        public SocketServer Server;
+        public SocketEventEnum Event;
+        public ulong Id;
+        public ulong ListenerId;
+        public System.Net.IPEndPoint Address;
 
         // 读数据专用
-        public byte[] Array { get; set; }
-        public int Offset { get; set; }
-        public int Size { get; set; }
-        public int CloseReason { get; set; }
+        public byte[] Array;
+        public int Offset;
+        public int Size;
+
+        // 连接关闭
+        public int CloseReason;
+
+        // udp
+        public System.Net.IPEndPoint FromAddress;
     }
 
     public delegate void SocketEventCallback(SocketEvent evt);
 
-    class Socket {
+    class Socket
+    {
         public ulong Id;
         public SOCKETS.Socket Fd;
         public System.Net.IPEndPoint Address;
         public SocketStatusEnum Status;
         public GENERIC.Queue<WriteBuffer> WriteList = new GENERIC.Queue<WriteBuffer>();
 
-        public SocketEventCallback OnOpen = DefaultOnOpen; // 客户端连接成功，或者服务器获得新连接
-        public SocketEventCallback OnClosed = DefaultOnClosed; // 客户端连接断开，或者服务器连接断开
-        public SocketEventCallback OnRead = DefaultOnRead; // 可读数据
-
-        public int GetWriteBufferSize() {
-            int ret = 0;
-            foreach (WriteBuffer wb in WriteList) {
-                ret += System.Math.Max(0, wb.Size);
-            }
-            return ret;
-        }
+        public SocketEventCallback Cb;
+        public bool Closed = false;
+        public ulong ListenerId = Const.InvalidSocketId;
+        public bool UDP = false;
 
         public override string ToString() {
             return string.Format("(socket id={0},addr={1},stat={2})", Id, Address, Status);
         }
 
-        public static void DefaultOnOpen(SocketEvent evt) {
-            Log.Logger.InfoFormat("socket is open (default cb): {0} {1}", evt.Id, evt.Address);
+        void DefaultCallback(SocketEvent e) {
+            Log.Logger.InfoFormat("default event: event={0}, id={1}, address={2}, size={3}, close_reason={4}",
+                e.Event, e.Id, e.Address, e.Size, e.CloseReason);
         }
 
-        public static void DefaultOnClosed(SocketEvent evt) {
-            Log.Logger.InfoFormat("socket is closed (default cb): {0} {1}", evt.Id, evt.Address);
+        public void Flush() {
+            if (UDP) {
+                while (WriteList.Count > 0) {
+                    WriteBuffer wb = WriteList.Peek();
+
+                    SocketHelper.SendTo(Fd, wb.Array, wb.Offset, wb.Size, wb.UdpAddr);
+
+                    WriteList.Dequeue();
+                }
+            } else {
+                while (WriteList.Count > 0) {
+                    WriteBuffer wb = WriteList.Peek();
+
+                    while (wb.Size > 0) {
+                        int ret = SocketHelper.Send(Fd, wb.Array, wb.Offset, wb.Size);
+
+                        if (ret <= 0) {
+                            return;
+                        }
+
+                        wb.Offset += ret;
+                        wb.Size -= ret;
+                    }
+
+                    WriteList.Dequeue();
+                }
+            }
         }
 
-        public static void DefaultOnRead(SocketEvent evt) {
-            Log.Logger.InfoFormat("socket read data (default cb): {0} {1}, {2}", evt.Id, evt.Address,
-                System.BitConverter.ToString(evt.Array, evt.Offset, evt.Size));
+        public void Close() {
+            SocketHelper.Close(Fd);
+            Closed = true;
+        }
+
+        public void Callback(SocketEvent e) {
+            if (Cb != null) {
+                Cb(e);
+            } else {
+                DefaultCallback(e);
+            }
         }
     }
 
-    class IdGenerator {
-        public static IdGenerator Instance = new IdGenerator();
-
+    class IdGenerator
+    {
         public ulong Next() {
             return ((ulong)System.DateTime.Now.Subtract(ts_zero).TotalSeconds << 32) + (ulong)(id++);
         }
@@ -136,13 +156,14 @@ namespace Net {
         readonly System.DateTime ts_zero = new System.DateTime(1970, 1, 1);
     }
 
-    public class SocketServer {
+    public class SocketServer
+    {
 
         public static SocketServer Instance = new SocketServer();
 
         public void Init() {
             for (int i = 0; i < poll_results.Length; ++i) {
-                poll_results[i] = new SocketPoll.Result();
+                poll_results[i] = new SocketPoller<Socket>.Result();
             }
             socket_poll.Init();
         }
@@ -157,9 +178,10 @@ namespace Net {
                 Socket socket = iter.Value;
 
                 Log.Logger.InfoFormat("socket is closed (server destroy): {0}", socket);
-                socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.SERVER_DESTROY));
-                socket_poll.Remove(socket.Fd);
-                SocketHelper.Close(socket.Fd);
+
+                socket.Callback(MakeCloseEvent(socket, SocketCloseReason.SERVER_DESTROY));
+                socket.Flush();
+                ForceClose(socket);
             }
 
             socket_poll.Destroy();
@@ -169,21 +191,21 @@ namespace Net {
         public int Update() {
             int n = socket_poll.Poll(poll_results, poll_results.Length);
 
-            for(int i = 0; i < n; ++i) {
-                SocketPoll.Result result = poll_results[i];
+            for (int i = 0; i < n; ++i) {
+                SocketPoller<Socket>.Result result = poll_results[i];
 
-                Socket socket = GetSocketObject(result.Id);
+                Socket socket = result.Userdata;
 
-                if (socket == null) {
-                    continue;
-                }
-
-                if (result.Read) {
+                if (!socket.Closed && result.Read) {
                     ProcessRead(socket);
                 }
 
-                if (result.Write) {
+                if (!socket.Closed && result.Write) {
                     ProcessWrite(socket);
+                }
+
+                if (!socket.Closed && result.Error) {
+                    ProcessError(socket);
                 }
             }
 
@@ -200,38 +222,35 @@ namespace Net {
                         }
                         fd.Blocking = false;
 
-                        ulong id = IdGenerator.Instance.Next();
+                        ulong id = id_generator.Next();
+
+                        if (sockets.ContainsKey(id)) {
+                            Log.Logger.ErrorFormat("accept failed, alloced id has been used: {0}", fd.RemoteEndPoint);
+                            SocketHelper.Close(fd);
+                            return;
+                        }
 
                         Socket client = new Socket() {
                             Id = id,
                             Fd = fd,
                             Address = (System.Net.IPEndPoint)fd.RemoteEndPoint,
                             Status = SocketStatusEnum.Accepted,
-                            OnOpen = socket.OnOpen,
-                            OnClosed = socket.OnClosed,
-                            OnRead = socket.OnRead,
+                            Cb = socket.Cb,
+                            ListenerId = socket.Id,
                         };
 
                         sockets.Add(id, client);
-                        socket_poll.Add(fd, id, true, false);
+                        socket_poll.Add(fd, client, true, false);
 
                         Log.Logger.InfoFormat("server accept new socket: {0}", client);
                         // 调用 开始连接的回调
-                        client.OnOpen(socket_event.Reset(id, client.Address));
+                        client.Cb(MakeOpenEvent(client));
 
                         return;
                     }
                 case SocketStatusEnum.Connecting: {
-                        // 正在连接的
-                        // 有可能连接失败，需要测试一下连接
-                        if (!socket.Fd.Connected) {
-                            // 没连上，直接关闭连接
-                            Log.Logger.InfoFormat("socket connecting failed: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CONNECT_FAILED));
-                            ForceClose(socket);
-                            return;
-                        }
-                        Log.Logger.ErrorFormat("process read failed, socket is connecting: {0}", socket);
+                        Log.Logger.ErrorFormat("connecting status can not read, socket={0}", socket);
+                        socket_poll.Modify(socket.Fd, socket, false, true);
                         return;
                     }
                 case SocketStatusEnum.Connected:
@@ -242,20 +261,31 @@ namespace Net {
                         if (ret < 0) {
                             // 连接挂了，直接强制关闭连接
                             Log.Logger.InfoFormat("socket is closed (read failed): {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.READ_FAILED));
+                            socket.Callback(MakeCloseEvent(socket, SocketCloseReason.READ_FAILED));
                             ForceClose(socket);
                             return;
                         } else if (ret == 0) {
                             // 客户端关闭了连接，先发送剩余数据，再关闭连接
                             Log.Logger.InfoFormat("socket is closed by remote: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CLOSED_BY_PEER));
-                            FlushAll(socket);
+                            socket.Callback(MakeCloseEvent(socket, SocketCloseReason.CLOSED_BY_PEER));
+                            socket.Flush();
                             ForceClose(socket);
                             return;
                         } else {
-                            socket.OnRead(socket_event.Reset(socket.Id, socket.Address, readbuffer, 0, ret));
+                            socket.Callback(MakeReadEvent(socket, readbuffer, 0, ret));
                             return;
                         }
+                    }
+                case SocketStatusEnum.UDP_BIND:
+                case SocketStatusEnum.UDP_CONNECT: {
+                        System.Net.EndPoint from_addr = socket.Address.AddressFamily == SOCKETS.AddressFamily.InterNetworkV6 ?
+                            new System.Net.IPEndPoint(System.Net.IPAddress.IPv6Any, 0) : new System.Net.IPEndPoint(System.Net.IPAddress.Any, 0);
+                        int ret = SocketHelper.ReceiveFrom(socket.Fd, readbuffer, 0, readbuffer.Length, ref from_addr);
+
+                        if (ret > 0 && from_addr is System.Net.IPEndPoint) {
+                            socket.Callback(MakeUdpReadEvent(socket, readbuffer, 0, ret, (System.Net.IPEndPoint)from_addr));
+                        }
+                        return;
                     }
                 default:
                     Log.Logger.ErrorFormat("process read failed, socket status {0} is invalid: {1}", socket.Status, socket);
@@ -264,29 +294,50 @@ namespace Net {
             }
         }
 
-        void ForceClose(Socket socket) {
-            socket_poll.Remove(socket.Fd);
-            SocketHelper.Close(socket.Fd);
-            sockets.Remove(socket.Id);
+        SocketEvent MakeCloseEvent(Socket socket, int close_reason) {
+            socket_event.Reset(this, SocketEventEnum.CLOSE);
+            socket_event.Id = socket.Id;
+            socket_event.Address = socket.Address;
+            socket_event.ListenerId = socket.ListenerId;
+            socket_event.CloseReason = close_reason;
+            return socket_event;
         }
 
-        void FlushAll(Socket socket) {
-            while (socket.WriteList.Count > 0) {
-                WriteBuffer wb = socket.WriteList.Peek();
+        SocketEvent MakeOpenEvent(Socket socket) {
+            socket_event.Reset(this, SocketEventEnum.OPEN);
+            socket_event.Id = socket.Id;
+            socket_event.Address = socket.Address;
+            socket_event.ListenerId = socket.ListenerId;
+            return socket_event;
+        }
 
-                while (wb.Size > 0) {
-                    int ret = SocketHelper.Send(socket.Fd, wb.Array, wb.Offset, wb.Size);
+        SocketEvent MakeReadEvent(Socket socket, byte[] array, int offset, int size) {
+            socket_event.Reset(this, SocketEventEnum.READ);
+            socket_event.Id = socket.Id;
+            socket_event.Address = socket.Address;
+            socket_event.ListenerId = socket.ListenerId;
+            socket_event.Array = array;
+            socket_event.Offset = offset;
+            socket_event.Size = size;
+            return socket_event;
+        }
 
-                    if (ret <= 0) {
-                        return;
-                    }
+        SocketEvent MakeUdpReadEvent(Socket socket, byte[] array, int offset, int size, System.Net.IPEndPoint from_addr) {
+            socket_event.Reset(this, SocketEventEnum.READ);
+            socket_event.Id = socket.Id;
+            socket_event.Address = socket.Address;
+            socket_event.ListenerId = socket.ListenerId;
+            socket_event.Array = array;
+            socket_event.Offset = offset;
+            socket_event.Size = size;
+            socket_event.FromAddress = from_addr;
+            return socket_event;
+        }
 
-                    wb.Offset += ret;
-                    wb.Size -= ret;
-                }
-
-                socket.WriteList.Dequeue();
-            }
+        void ForceClose(Socket socket) {
+            socket_poll.Remove(socket.Fd);
+            socket.Close();
+            sockets.Remove(socket.Id);
         }
 
         void ProcessWrite(Socket socket) {
@@ -294,7 +345,7 @@ namespace Net {
                 case SocketStatusEnum.Listening: {
                         // 这是异常情况
                         Log.Logger.ErrorFormat("process write failed, socket is listening: {0}", socket);
-                        socket_poll.Modify(socket.Fd, socket.Id, true, false);
+                        socket_poll.Modify(socket.Fd, socket, true, false);
                         return;
                     }
                 case SocketStatusEnum.Accepted:
@@ -309,7 +360,7 @@ namespace Net {
                                 if (ret < 0) {
                                     // 连接挂了，关闭连接
                                     Log.Logger.InfoFormat("socket is closed (write failed): {0}", socket);
-                                    socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.WRITE_FAILED));
+                                    socket.Callback(MakeCloseEvent(socket, SocketCloseReason.WRITE_FAILED));
                                     ForceClose(socket);
                                     return;
                                 } else if (ret == 0) {
@@ -323,7 +374,7 @@ namespace Net {
 
                             socket.WriteList.Dequeue();
                         }
-                        socket_poll.Modify(socket.Fd, socket.Id, true, false);
+                        socket_poll.Modify(socket.Fd, socket, true, false);
                         return;
                     }
                 case SocketStatusEnum.Connecting: {
@@ -331,7 +382,7 @@ namespace Net {
                         if (!socket.Fd.Connected) {
                             // 没连上，直接关闭连接
                             Log.Logger.InfoFormat("socket connecting failed: {0}", socket);
-                            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.CONNECT_FAILED));
+                            socket.Callback(MakeCloseEvent(socket, SocketCloseReason.CONNECT_FAILED));
                             ForceClose(socket);
                             return;
                         }
@@ -339,15 +390,62 @@ namespace Net {
 
                         Log.Logger.InfoFormat("socket has connected: {0}", socket);
                         socket.Status = SocketStatusEnum.Connected;
-                        socket.OnOpen(socket_event.Reset(socket.Id, socket.Address));
+                        socket.Callback(MakeOpenEvent(socket));
 
-                        if (socket.WriteList.Count <= 0) {
-                            socket_poll.Modify(socket.Fd, socket.Id, true, false);
+                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
+                        return;
+                    }
+                case SocketStatusEnum.UDP_BIND:
+                case SocketStatusEnum.UDP_CONNECT: {
+                        while (socket.WriteList.Count > 0) {
+                            WriteBuffer wb = socket.WriteList.Peek();
+
+                            int ret = SocketHelper.SendTo(socket.Fd, wb.Array, wb.Offset, wb.Size, wb.UdpAddr);
+
+                            if (ret == 0) {
+                                return;
+                            }
+
+                            socket.WriteList.Dequeue();
                         }
+
+                        socket_poll.Modify(socket.Fd, socket, true, false);
                         return;
                     }
                 default:
                     Log.Logger.ErrorFormat("process write failed, socket status {0} is invalid: {1}", socket.Status, socket);
+                    return;
+            }
+        }
+
+        void ProcessError(Socket socket) {
+            switch (socket.Status) {
+                case SocketStatusEnum.Connecting: {
+                        if (!socket.Fd.Connected) {
+                            // 没连上，直接关闭连接
+                            Log.Logger.InfoFormat("socket connecting failed: {0}", socket);
+                            socket.Callback(MakeCloseEvent(socket, SocketCloseReason.CONNECT_FAILED));
+                            ForceClose(socket);
+                            return;
+                        }
+                        //连上了，标记为已连接
+
+                        Log.Logger.InfoFormat("socket has connected: {0}", socket);
+                        socket.Status = SocketStatusEnum.Connected;
+                        socket.Callback(MakeOpenEvent(socket));
+
+                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
+                    }
+                    return;
+                case SocketStatusEnum.Accepted:
+                case SocketStatusEnum.Connected: {
+                        Log.Logger.InfoFormat("socket is closed (poll error): {0}", socket);
+                        socket.Callback(MakeCloseEvent(socket, SocketCloseReason.POLL_ERROR));
+                        ForceClose(socket);
+                        return;
+                    }
+                default:
+                    Log.Logger.ErrorFormat("socket get error event: {0}", socket);
                     return;
             }
         }
@@ -364,39 +462,15 @@ namespace Net {
                 return;
             }
 
-            switch (socket.Status) {
-                case SocketStatusEnum.Listening: {
-                        Log.Logger.ErrorFormat("send failed: {0} is listening", socket);
-                        return;
-                    }
-                default: {
-                        break;
-                    }
-            }
-
-            //先尝试发送一次
-            if (socket.WriteList.Count <= 0) {
-                int ret = SocketHelper.Send(socket.Fd, array, offset, size);
-                if (ret > 0) {
-                    offset += ret;
-                    size -= offset;
-
-                    if (size <= 0) {
-                        return;
-                    }
-                }
-            }
-
             byte[] copied = new byte[size];
             System.Buffer.BlockCopy(array, offset, copied, 0, size);
-
-            socket.WriteList.Enqueue(new WriteBuffer() {
+            WriteBuffer wb = new WriteBuffer() {
                 Array = copied,
                 Offset = 0,
                 Size = size,
-            });
+            };
 
-            socket_poll.Modify(socket.Fd, socket.Id, true, true);
+            SendBuffer(socket, wb);
         }
 
         public void SendNocopy(ulong id, byte[] array, int offset, int size) {
@@ -411,54 +485,70 @@ namespace Net {
                 return;
             }
 
-            switch (socket.Status) {
-                case SocketStatusEnum.Listening: {
-                        Log.Logger.ErrorFormat("send failed: {0} is listening", socket);
-                        return;
-                    }
-                default: {
-                        break;
-                    }
+            WriteBuffer wb = new WriteBuffer() {
+                Array = array,
+                Offset = offset,
+                Size = size,
+            };
+
+            SendBuffer(socket, wb);
+        }
+
+        void SendBuffer(Socket socket, WriteBuffer wb) {
+            if (wb.Size <= 0) {
+                return;
             }
 
-            //先尝试发送一次
-            if (socket.WriteList.Count <= 0) {
-                int ret = SocketHelper.Send(socket.Fd, array, offset, size);
-                if (ret > 0) {
-                    offset += ret;
-                    size -= offset;
+            if (socket.Status == SocketStatusEnum.Listening) {
+                Log.Logger.ErrorFormat("send failed: {0} is listening", socket);
+                return;
+            }
 
-                    if (size <= 0) {
+            if (socket.WriteList.Count <= 0) {
+                if (socket.UDP) {
+                    int ret = SocketHelper.SendTo(socket.Fd, wb.Array, wb.Offset, wb.Size, wb.UdpAddr);
+
+                    if (ret > 0) {
                         return;
+                    }
+                } else {
+                    int ret = SocketHelper.Send(socket.Fd, wb.Array, wb.Offset, wb.Size);
+
+                    if (ret > 0) {
+                        wb.Offset += ret;
+                        wb.Size -= ret;
+
+                        if (wb.Size <= 0) {
+                            return;
+                        }
                     }
                 }
             }
 
-            socket.WriteList.Enqueue(new WriteBuffer() {
-                Array = array,
-                Offset = offset,
-                Size = size,
-            });
-
-            socket_poll.Modify(socket.Fd, socket.Id, true, true);
+            socket.WriteList.Enqueue(wb);
+            socket_poll.Modify(socket.Fd, socket, true, true);
         }
 
-        public void Close(ulong id) {
+        public void Close(ulong id, bool call_cb = true, int close_reason = SocketCloseReason.MANUALLY_CLOSED) {
             Socket socket = GetSocketObject(id);
 
             if (socket == null) {
+                Log.Logger.ErrorFormat("failed to close socket, get socket failed: {0}", id);
                 return;
             }
 
             Log.Logger.InfoFormat("socket is closed manully: {0}", socket);
-            socket.OnClosed(socket_event.Reset(socket.Id, socket.Address, SocketCloseReason.MANUALLY_CLOSED));
-            FlushAll(socket);
+
+            if (call_cb) {
+                socket.Callback(MakeCloseEvent(socket, close_reason));
+            }
+            socket.Flush();
             ForceClose(socket);
         }
 
         // as client
-        public ulong Connect(System.Net.IPEndPoint remote, SocketEventCallback on_open, SocketEventCallback on_close, SocketEventCallback on_read) {
-            SOCKETS.Socket fd = new SOCKETS.Socket(SOCKETS.AddressFamily.InterNetwork, SOCKETS.SocketType.Stream, SOCKETS.ProtocolType.Tcp);
+        public ulong Connect(System.Net.IPEndPoint remote, SocketEventCallback cb) {
+            SOCKETS.Socket fd = new SOCKETS.Socket(remote.AddressFamily, SOCKETS.SocketType.Stream, SOCKETS.ProtocolType.Tcp);
             fd.Blocking = false;
 
             if (!SocketHelper.Connect(fd, remote)) {
@@ -466,20 +556,24 @@ namespace Net {
                 return Const.InvalidSocketId;
             }
 
-            ulong id = IdGenerator.Instance.Next();
+            ulong id = id_generator.Next();
+
+            if (sockets.ContainsKey(id)) {
+                Log.Logger.ErrorFormat("connect failed, alloced id has been used: {0}", fd.RemoteEndPoint);
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
 
             Socket socket = new Socket() {
                 Id = id,
                 Fd = fd,
                 Address = remote,
                 Status = SocketStatusEnum.Connecting,
-                OnOpen = on_open,
-                OnClosed = on_close,
-                OnRead = on_read,
+                Cb = cb,
             };
 
             sockets.Add(id, socket);
-            socket_poll.Add(fd, id, true, true);
+            socket_poll.Add(fd, socket, false, true);
 
             Log.Logger.InfoFormat("socket is connecting: {0}", socket);
 
@@ -487,8 +581,8 @@ namespace Net {
         }
 
         // as server
-        public ulong Listen(System.Net.IPEndPoint local, SocketEventCallback on_open, SocketEventCallback on_close, SocketEventCallback on_read) {
-            SOCKETS.Socket fd = new SOCKETS.Socket(SOCKETS.AddressFamily.InterNetwork, SOCKETS.SocketType.Stream, SOCKETS.ProtocolType.Tcp);
+        public ulong Listen(System.Net.IPEndPoint local, SocketEventCallback cb) {
+            SOCKETS.Socket fd = new SOCKETS.Socket(local.AddressFamily, SOCKETS.SocketType.Stream, SOCKETS.ProtocolType.Tcp);
             fd.SetSocketOption(SOCKETS.SocketOptionLevel.Socket, SOCKETS.SocketOptionName.ReuseAddress, true);
             fd.Blocking = false;
 
@@ -502,24 +596,137 @@ namespace Net {
                 return Const.InvalidSocketId;
             }
 
-            ulong id = IdGenerator.Instance.Next();
+            ulong id = id_generator.Next();
+
+            if (sockets.ContainsKey(id)) {
+                Log.Logger.ErrorFormat("listen failed, alloced is has been used: {0}", fd.RemoteEndPoint);
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
 
             Socket socket = new Socket() {
                 Id = id,
                 Fd = fd,
                 Address = local,
                 Status = SocketStatusEnum.Listening,
-                OnOpen = on_open,
-                OnClosed = on_close,
-                OnRead = on_read,
+                Cb = cb,
             };
 
             sockets.Add(id, socket);
-            socket_poll.Add(fd, id, true, false);
+            socket_poll.Add(fd, socket, true, false);
 
             Log.Logger.InfoFormat("socket is listening: {0}", socket);
 
             return id;
+        }
+
+        public ulong UdpBind(System.Net.IPEndPoint local, SocketEventCallback cb) {
+            SOCKETS.Socket fd = new SOCKETS.Socket(local.AddressFamily, SOCKETS.SocketType.Dgram, SOCKETS.ProtocolType.Udp);
+            fd.SetSocketOption(SOCKETS.SocketOptionLevel.Socket, SOCKETS.SocketOptionName.ReuseAddress, true);
+            fd.Blocking = false;
+
+            if (!SocketHelper.Bind(fd, local)) {
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
+
+            ulong id = id_generator.Next();
+
+            if (sockets.ContainsKey(id)) {
+                Log.Logger.ErrorFormat("udp bind failed, alloced is has been used: {0}", fd.RemoteEndPoint);
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
+
+            Socket socket = new Socket() {
+                Id = id,
+                Fd = fd,
+                Address = local,
+                Status = SocketStatusEnum.UDP_BIND,
+                Cb = cb,
+                UDP = true,
+            };
+
+            sockets.Add(id, socket);
+            socket_poll.Add(fd, socket, true, false);
+
+            return id;
+        }
+
+        public ulong UdpConnect(System.Net.IPEndPoint remote, SocketEventCallback cb) {
+            SOCKETS.Socket fd = new SOCKETS.Socket(remote.AddressFamily, SOCKETS.SocketType.Dgram, SOCKETS.ProtocolType.Udp);
+            fd.Blocking = false;
+
+            if (!SocketHelper.Connect(fd, remote)) {
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
+
+            ulong id = id_generator.Next();
+
+            if (sockets.ContainsKey(id)) {
+                Log.Logger.ErrorFormat("udp connect failed, alloced id has been used: {0}", fd.RemoteEndPoint);
+                SocketHelper.Close(fd);
+                return Const.InvalidSocketId;
+            }
+
+            Socket socket = new Socket() {
+                Id = id,
+                Fd = fd,
+                Address = remote,
+                Status = SocketStatusEnum.UDP_CONNECT,
+                Cb = cb,
+                UDP = true,
+            };
+
+            sockets.Add(id, socket);
+            socket_poll.Add(fd, socket, true, false);
+
+            return id;
+        }
+
+        public void SendUdpCopy(ulong id, System.Net.IPEndPoint to_addr, byte[] array, int offset, int size) {
+            if (size <= 0) {
+                return;
+            }
+
+            Socket socket = GetSocketObject(id);
+
+            if (socket == null) {
+                Log.Logger.ErrorFormat("SendUdpCopy failed: id {0} not exist", id);
+                return;
+            }
+
+            WriteBuffer wb = new WriteBuffer() {
+                Array = array,
+                Offset = offset,
+                Size = size,
+                UdpAddr = to_addr,
+            };
+
+            SendBuffer(socket, wb);
+        }
+
+        public void SendUdpNocopy(ulong id, System.Net.IPEndPoint to_addr, byte[] array, int offset, int size) {
+            if (size <= 0) {
+                return;
+            }
+
+            Socket socket = GetSocketObject(id);
+
+            if (socket == null) {
+                Log.Logger.ErrorFormat("SendUdpNocopy failed: id {0} not exist", id);
+                return;
+            }
+
+            WriteBuffer wb = new WriteBuffer() {
+                Array = array,
+                Offset = offset,
+                Size = size,
+                UdpAddr = to_addr,
+            };
+
+            SendBuffer(socket, wb);
         }
 
         Socket GetSocketObject(ulong id) {
@@ -528,12 +735,52 @@ namespace Net {
 
         GENERIC.Dictionary<ulong, Socket> sockets = new GENERIC.Dictionary<ulong, Socket>();
 
-        SocketPoll.Result[] poll_results = new SocketPoll.Result[128];
+        SocketPoller<Socket>.Result[] poll_results = new SocketPoller<Socket>.Result[128];
         byte[] readbuffer = new byte[1024 * 1024 * 10];
-        SocketPoll socket_poll = new SocketPoll();
+        SocketPoller<Socket> socket_poll = new SocketPoller<Socket>();
         SocketEvent socket_event = new SocketEvent();
+        IdGenerator id_generator = new IdGenerator();
     }
 
+    public class SocketServerLoop {
+        public void Init(SocketServer server) {
+            this.server = server;
+            exit = false;
+            s_exit = false;
+
+            System.Console.CancelKeyPress += Console_CancelKeyPress;
+        }
+        private void Console_CancelKeyPress(object sender, System.ConsoleCancelEventArgs e) {
+            exit = true;
+        }
+
+        public void Destroy() {
+            this.server = null;
+            exit = true;
+            s_exit = true;
+
+            System.Console.CancelKeyPress -= Console_CancelKeyPress;
+        }
+
+        public void Loop() {
+            while (!exit && !s_exit) {
+                int n = server.Update();
+
+                if (n <= 0) {
+                    System.Threading.Thread.Sleep(10);
+                }
+            }
+        }
+
+        public void Exit() {
+            exit = true;
+        }
+
+        SocketServer server;
+        bool exit = true;
+        static bool s_exit = true;
+    }
 }
+
 
 

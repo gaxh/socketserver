@@ -1,7 +1,9 @@
 
-namespace Net {
+namespace Net
+{
 
-    public class Assert {
+    public class Assert
+    {
         public class AssertException : System.Exception
         {
             public AssertException(string msg) : base(msg) { }
@@ -30,4 +32,5 @@ namespace Net {
 
 
 }
+
 
