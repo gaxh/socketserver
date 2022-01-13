@@ -699,6 +699,7 @@ failed:
             so->ADDR = addr;
             so->STATUS = SOCKET_STATUS_UDP_BIND;
             so->CB = cb;
+            so->UDP = true;
 
             m_sockets[id] = so;
             m_poller.Add(fd, so, true, false);
@@ -757,6 +758,7 @@ failed:
             so->ADDR = addr;
             so->STATUS = SOCKET_STATUS_UDP_CONNECT;
             so->CB = cb;
+            so->UDP = true;
 
             m_sockets[id] = so;
             m_poller.Add(fd, so, true, false);
