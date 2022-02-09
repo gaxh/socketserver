@@ -1283,6 +1283,7 @@ void SocketServer::Init() {
 void SocketServer::Destroy() {
     if(m_impl) {
         m_impl->Destroy();
+        delete m_impl;
         m_impl = NULL;
     }
 }

@@ -699,9 +699,11 @@ namespace Net
                 return;
             }
 
+            byte[] copied = new byte[size];
+            System.Buffer.BlockCopy(array, offset, copied, 0, size);
             WriteBuffer wb = new WriteBuffer() {
-                Array = array,
-                Offset = offset,
+                Array = copied,
+                Offset = 0,
                 Size = size,
                 UdpAddr = to_addr,
             };
