@@ -1233,10 +1233,9 @@ private:
                     }
 
                     // 连接成功
+                    m_poller.Modify(so->FD, so, true, so->WRITE_LIST.size() != 0);
                     so->STATUS = SOCKET_STATUS_CONNECTED;
                     so->Callback(MakeOpenEvent(so));
-
-                    m_poller.Modify(so->FD, so, true, so->WRITE_LIST.size() != 0);
                 }
                 break;
             case SOCKET_STATUS_UDP_BIND:

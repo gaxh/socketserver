@@ -389,10 +389,10 @@ namespace Net
                         //连上了，标记为已连接
 
                         Log.Logger.InfoFormat("socket has connected: {0}", socket);
+                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
                         socket.Status = SocketStatusEnum.Connected;
                         socket.Callback(MakeOpenEvent(socket));
 
-                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
                         return;
                     }
                 case SocketStatusEnum.UDP_BIND:
@@ -431,10 +431,9 @@ namespace Net
                         //连上了，标记为已连接
 
                         Log.Logger.InfoFormat("socket has connected: {0}", socket);
+                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
                         socket.Status = SocketStatusEnum.Connected;
                         socket.Callback(MakeOpenEvent(socket));
-
-                        socket_poll.Modify(socket.Fd, socket, true, socket.WriteList.Count > 0);
                     }
                     return;
                 case SocketStatusEnum.Accepted:
