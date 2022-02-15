@@ -107,10 +107,14 @@ public:
     void Loop();
     void Exit();
 
+    using LOOP_CALLBACK = std::function<int()>;
+    void LoopCall(LOOP_CALLBACK cb);
+
 private:
     SocketServer *m_ss = NULL;
     bool m_exit = true;
     static bool s_exit;
+    LOOP_CALLBACK m_loop_cb;
 };
 
 #endif

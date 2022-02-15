@@ -260,6 +260,10 @@ struct SocketWriteBuffer {
             FREE(ARRAY);
         }
     }
+
+    size_t DataSize() {
+        return OFFSET + SIZE;
+    }
 };
 
 // socket
@@ -270,6 +274,7 @@ struct Socket {
     SOCKET_ADDRESS ADDR;
     SocketStatusEnum STATUS;
     std::queue<SocketWriteBuffer> WRITE_LIST;
+    size_t WRITE_DATA_SIZE = 0;
     SOCKET_EVENT_CALLBACK CB;
     bool CLOSED = false;
     SOCKET_ID LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
@@ -296,6 +301,7 @@ struct Socket {
                         buffer.UDP_SA_BUFFER_LEN != 0 ? (struct sockaddr *)buffer.UDP_SA_BUFFER : NULL,
                         buffer.UDP_SA_BUFFER_LEN);
 
+                WRITE_DATA_SIZE -= buffer.DataSize();
                 buffer.Free();
                 WRITE_LIST.pop();
             }
@@ -314,6 +320,7 @@ struct Socket {
                     buffer.SIZE -= sent_bytes;
                 }
 
+                WRITE_DATA_SIZE -= buffer.DataSize();
                 buffer.Free();
                 WRITE_LIST.pop();
             }
@@ -325,10 +332,18 @@ struct Socket {
         while(WRITE_LIST.size()) {
             SocketWriteBuffer &buffer = WRITE_LIST.front();
 
+            WRITE_DATA_SIZE -= buffer.DataSize();
             buffer.Free();
             WRITE_LIST.pop();
         }
         CLOSED = true;
+
+        // check WRITE_DATA_SIZE, debug only
+        /*
+        if(WRITE_DATA_SIZE != 0) {
+            SOCKET_SERVER_ERROR("Close: socket write buffer is not empty: %llu", ID);
+        }
+        */
     }
 
     void Callback(const SOCKET_EVENT &e) {
@@ -1066,6 +1081,7 @@ private:
             }
         }
 
+        so->WRITE_DATA_SIZE += buffer.DataSize();
         so->WRITE_LIST.emplace(buffer);
         m_poller.Modify(so->FD, so, true, true);
     }
@@ -1211,6 +1227,7 @@ private:
                             }
                         }
 
+                        so->WRITE_DATA_SIZE -= buffer.DataSize();
                         buffer.Free();
                         so->WRITE_LIST.pop();
                     }
@@ -1254,6 +1271,7 @@ private:
                         }
                         // 出错就不管了，udp不在乎发不发得出去
 
+                        so->WRITE_DATA_SIZE -= buffer.DataSize();
                         buffer.Free();
                         so->WRITE_LIST.pop();
                     }
@@ -1402,6 +1420,10 @@ void SocketServerLoop::Loop() {
     while(!m_exit && !s_exit) {
         int n = m_ss->Update();
 
+        if(m_loop_cb) {
+            n += m_loop_cb();
+        }
+
         if(n <= 0) {
             usleep(10000);
         }
@@ -1410,6 +1432,10 @@ void SocketServerLoop::Loop() {
 
 void SocketServerLoop::Exit() {
     m_exit = true;
+}
+
+void SocketServerLoop::LoopCall(LOOP_CALLBACK cb) {
+    m_loop_cb = cb;
 }
 
 bool SocketServerLoop::s_exit = true;

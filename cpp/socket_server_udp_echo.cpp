@@ -13,7 +13,7 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
             LOG("Disconnected: id=%llu, ip=%s, port=%hu, v6=%d, reason=%d, lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.CLOSE_REASON, e.LISTENER_ID);
             break;
         case SocketServer::SOCKET_EVENT_READ:
-            LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s), lid=%llu, from_ip=%s, from_port=%hu, from_v6=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str(), e.LISTENER_ID, e.FROM_ADDR->IP, e.FROM_ADDR->PORT, e.FROM_ADDR->V6);
+            LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s), lid=%llu, from_ip=%s, from_port=%hu, from_v6=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, e.SIZE < 50 ? SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str() : "<IGNORED>", e.LISTENER_ID, e.FROM_ADDR->IP, e.FROM_ADDR->PORT, e.FROM_ADDR->V6);
             //e.SERVER->SendUdpCopy(e.ID, *e.FROM_ADDR, e.ARRAY, e.OFFSET, e.SIZE);
             e.SERVER->SendUdpCopy(e.ID, e.FROM_UDP_ID, e.ARRAY, e.OFFSET, e.SIZE);
             break;
