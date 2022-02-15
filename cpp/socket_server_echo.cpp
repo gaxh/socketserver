@@ -32,8 +32,8 @@ int main() {
     SocketServer::SOCKET_ID l4 = s.Listen4("0.0.0.0", 12321, Event);
     SocketServer::SOCKET_ID l6 = s.Listen6("::", 12322, Event);
 
-    s.SetWriteReportThreshold(l4, 2000);
-    s.SetWriteReportThreshold(l6, 2000);
+    s.SetWriteReportThreshold(l4, 1000);
+    s.SetWriteReportThreshold(l6, 1000);
 
     loop.Loop();
 

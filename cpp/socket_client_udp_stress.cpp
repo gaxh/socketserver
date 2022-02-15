@@ -60,6 +60,9 @@ int main() {
     addr.V6 = true;
     SocketServer::SOCKET_ID s6 = s.UdpConnect(addr, Event);
 
+    s.SetWriteReportThreshold(s4, 1000);
+    s.SetWriteReportThreshold(s6, 1000);
+
     loop.LoopCall([&s, s4, s6]() -> int {
                 SocketServer::SOCKET_ID ids[2];
                 ids[0] = s4;
