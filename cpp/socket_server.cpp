@@ -226,6 +226,8 @@ static inline const char *SocketEventRepr(SocketServer::SocketEventEnum e) {
             return "CLOSE";
         case SocketServer::SOCKET_EVENT_READ:
             return "READ";
+        case SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD:
+            return "WRITE_REPORT_THRESHOLD";
         default:
             return "UNKNOWN";
     }
@@ -243,6 +245,7 @@ static inline void ResetSocketEvent(SOCKET_EVENT &e, SocketServer *server, Socke
     e.LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
     e.FROM_ADDR = NULL;
     e.FROM_UDP_ID = NULL;
+    e.ABOVE_THRESHOLD = false;
 }
 
 // write buffer
@@ -279,6 +282,9 @@ struct Socket {
     bool CLOSED = false;
     SOCKET_ID LISTENER_ID = SocketServer::INVALID_SOCKET_ID;
     bool UDP = false;
+    size_t WRITE_REPORT_THRESHOLD = (size_t)-1;
+    size_t LAST_REPORTED_WRITE_THRESHOLD = 0;
+    bool LAST_REPORTED_WRITE_ABOVE_THRESHOLD = false;
 
     std::string Dump() {
         char buffer[128];
@@ -339,11 +345,10 @@ struct Socket {
         CLOSED = true;
 
         // check WRITE_DATA_SIZE, debug only
-        /*
+        // TODO
         if(WRITE_DATA_SIZE != 0) {
             SOCKET_SERVER_ERROR("Close: socket write buffer is not empty: %llu", ID);
         }
-        */
     }
 
     void Callback(const SOCKET_EVENT &e) {
@@ -922,6 +927,17 @@ failed:
         SendBuffer(so, std::move(buffer));
     }
 
+    void SetWriteReportThreshold(SOCKET_ID id, size_t threshold) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SetWriteReportThreshold: failed to get socket object: %llu", id);
+            return;
+        }
+
+        so->WRITE_REPORT_THRESHOLD = threshold;
+    }
+
 private:
     SocketServerPoller<Socket> m_poller;
     static constexpr int POLL_EVENT_CAPACITY = 128;
@@ -950,6 +966,30 @@ private:
 
     static void FreeSocketObject(Socket *s) {
         delete s;
+    }
+
+    void TriggerWriteReport(Socket *s) {
+        if(s->LAST_REPORTED_WRITE_THRESHOLD == s->WRITE_REPORT_THRESHOLD) {
+            if( !s->LAST_REPORTED_WRITE_ABOVE_THRESHOLD && s->WRITE_DATA_SIZE < s->WRITE_REPORT_THRESHOLD ) {
+                return;
+            } else if( s->LAST_REPORTED_WRITE_ABOVE_THRESHOLD && s->WRITE_DATA_SIZE >= s->WRITE_REPORT_THRESHOLD ) {
+                return;
+            }
+        }
+
+        s->LAST_REPORTED_WRITE_THRESHOLD = s->WRITE_REPORT_THRESHOLD;
+
+        if(s->WRITE_DATA_SIZE < s->WRITE_REPORT_THRESHOLD) {
+            // 写缓冲降低到阈值以下
+            s->LAST_REPORTED_WRITE_ABOVE_THRESHOLD = false;
+
+            s->Callback(MakeWriteReportThresholdEvent(s, false));
+        } else {
+            // 写缓冲超过阈值
+            s->LAST_REPORTED_WRITE_ABOVE_THRESHOLD = true;
+
+            s->Callback(MakeWriteReportThresholdEvent(s, true));
+        }
     }
 
     void RecyclePending(Socket *s) {
@@ -1034,6 +1074,18 @@ private:
         return m_event;
     }
 
+    const SOCKET_EVENT &MakeWriteReportThresholdEvent(Socket *so, bool above_threshold) {
+        ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD);
+
+        m_event.ID = so->ID;
+        m_event.ADDR = &so->ADDR;
+        m_event.LISTENER_ID = so->LISTENER_ID;
+
+        m_event.ABOVE_THRESHOLD = above_threshold;
+
+        return m_event;
+    }
+
     Socket *GetSocketObject(SOCKET_ID id) {
         auto iter = m_sockets.find(id);
 
@@ -1084,6 +1136,8 @@ private:
         so->WRITE_DATA_SIZE += buffer.DataSize();
         so->WRITE_LIST.emplace(buffer);
         m_poller.Modify(so->FD, so, true, true);
+
+        TriggerWriteReport(so);
     }
 
     void ForceClose(Socket *so) {
@@ -1133,6 +1187,7 @@ private:
                     ac_so->STATUS = SOCKET_STATUS_ACCEPTED;
                     ac_so->CB = so->CB;
                     ac_so->LISTENER_ID = so->ID;
+                    ac_so->WRITE_REPORT_THRESHOLD = so->WRITE_REPORT_THRESHOLD;
 
                     m_sockets[id] = ac_so;
                     m_poller.Add(fd, ac_so, true, false);
@@ -1233,6 +1288,8 @@ private:
                     }
 
                     m_poller.Modify(so->FD, so, true, false);
+
+                    TriggerWriteReport(so);
                 }
                 break;
             case SOCKET_STATUS_CONNECTING:
@@ -1277,6 +1334,8 @@ private:
                     }
 
                     m_poller.Modify(so->FD, so, true, false);
+
+                    TriggerWriteReport(so);
                 }
                 break;
             default:
@@ -1395,6 +1454,10 @@ const UDP_IDENTIFIER *SocketServer::CopyUdpIdentifier(void *buffer, size_t *size
 
 const UDP_IDENTIFIER *SocketServer::MakeUdpIdentifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr) {
     return make_udp_identifier(buffer, size, addr);
+}
+
+void SocketServer::SetWriteReportThreshold(SOCKET_ID id, size_t threshold) {
+    m_impl->SetWriteReportThreshold(id, threshold);
 }
 
 const size_t SocketServer::UDP_IDENTIFIER_SIZE = SOCKADDR_BUFFER_SIZE;

@@ -16,6 +16,8 @@ static unsigned long long Ms() {
 static void Event(const SocketServer::SOCKET_EVENT &e) {
     if(e.EVENT == SocketServer::SOCKET_EVENT_READ) {
         LOG("<ID=%llu, LID=%llu> RECV size=%zu, data=(%s)", e.ID, e.LISTENER_ID, e.SIZE, e.SIZE < 50 ? SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str() : "<IGNORED>");
+    } else if(e.EVENT == SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD) {
+        LOG("<ID=%llu, LID=%llu> WRITE REPORT above=%d", e.ID, e.LISTENER_ID, e.ABOVE_THRESHOLD);
     }
 }
 
@@ -47,6 +49,9 @@ int main() {
     s.Init();
     SocketServer::SOCKET_ID s4 = s.Connect4("127.0.0.1", 12321, Event);
     SocketServer::SOCKET_ID s6 = s.Connect6("::1", 12322, Event);
+
+    s.SetWriteReportThreshold(s4, 1000);
+    s.SetWriteReportThreshold(s6, 1000);
 
     loop.LoopCall([&s, s4, s6]() -> int {
                 SocketServer::SOCKET_ID ids[2];

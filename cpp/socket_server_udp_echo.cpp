@@ -17,6 +17,12 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
             //e.SERVER->SendUdpCopy(e.ID, *e.FROM_ADDR, e.ARRAY, e.OFFSET, e.SIZE);
             e.SERVER->SendUdpCopy(e.ID, e.FROM_UDP_ID, e.ARRAY, e.OFFSET, e.SIZE);
             break;
+        case SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD:
+            LOG("WriteReportThreshold: id=%llu, ip=%s, port=%hu, v6=%d, lid=%llu, above=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.LISTENER_ID, e.ABOVE_THRESHOLD);
+            break;
+
+        default:
+            break;
     }
 }
 
@@ -27,14 +33,17 @@ int main() {
 
     s.Init();
     SocketServer::SOCKET_ADDRESS addr;
-    strcpy(addr.IP, "127.0.0.1");
+    strcpy(addr.IP, "0.0.0.0");
     addr.PORT = 12321;
     addr.V6 = false;
-    s.UdpBind(addr, Event);
-    strcpy(addr.IP, "::1");
+    SocketServer::SOCKET_ID u4 = s.UdpBind(addr, Event);
+    strcpy(addr.IP, "::");
     addr.PORT = 12322;
     addr.V6 = true;
-    s.UdpBind(addr, Event);
+    SocketServer::SOCKET_ID u6 = s.UdpBind(addr, Event);
+
+    s.SetWriteReportThreshold(u4, 2000);
+    s.SetWriteReportThreshold(u6, 2000);
 
     loop.Loop();
 

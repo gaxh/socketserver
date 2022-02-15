@@ -16,6 +16,8 @@ static unsigned long long Ms() {
 static void Event(const SocketServer::SOCKET_EVENT &e) {
     if(e.EVENT == SocketServer::SOCKET_EVENT_READ) {
         LOG("<ID=%llu, LID=%llu> RECV size=%zu, data=(%s)", e.ID, e.LISTENER_ID, e.SIZE, e.SIZE < 50 ? SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str() : "<IGNORED>");
+    } else if(e.EVENT == SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD) {
+        LOG("<ID=%llu, LID=%llu> WRITE REPORT above=%d", e.ID, e.LISTENER_ID, e.ABOVE_THRESHOLD);
     }
 }
 

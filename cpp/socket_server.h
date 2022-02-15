@@ -29,6 +29,7 @@ public:
         SOCKET_EVENT_OPEN,
         SOCKET_EVENT_CLOSE,
         SOCKET_EVENT_READ,
+        SOCKET_EVENT_WRITE_REPORT_THRESHOLD,
     };
 
     struct UDP_IDENTIFIER;
@@ -45,6 +46,7 @@ public:
         int CLOSE_REASON;
         const SOCKET_ADDRESS *FROM_ADDR;
         const UDP_IDENTIFIER *FROM_UDP_ID; // 这是个临时值，只能在收到数据的回调里使用，在回调外无效。可以调用 CopyUdpIdentifier 把它拷贝出来使用
+        bool ABOVE_THRESHOLD; // 写缓冲大小是否超过设定的阈值
     };
 
     using SOCKET_EVENT_CALLBACK = typename std::function<void(const SOCKET_EVENT &e)>;
@@ -94,6 +96,8 @@ public:
     void SendUdpCopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, const void *array, size_t offset, size_t size);
 
     void SendUdpNocopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
+
+    void SetWriteReportThreshold(SOCKET_ID id, size_t threshold);
 
 private:
     class IMPL;

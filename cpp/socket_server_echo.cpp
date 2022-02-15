@@ -15,6 +15,11 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
             LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s), lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, e.SIZE < 50 ? SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str() : "<IGNORED>", e.LISTENER_ID);
             e.SERVER->SendCopy(e.ID, e.ARRAY, e.OFFSET, e.SIZE);
             break;
+        case SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD:
+            LOG("WriteReportThreshold: id=%llu, ip=%s, port=%hu, v6=%d, lid=%llu, above=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.LISTENER_ID, e.ABOVE_THRESHOLD);
+            break;
+        default:
+            break;
     }
 }
 
@@ -24,8 +29,11 @@ int main() {
     loop.Init(&s);
 
     s.Init();
-    s.Listen4("127.0.0.1", 12321, Event);
-    s.Listen6("::1", 12322, Event);
+    SocketServer::SOCKET_ID l4 = s.Listen4("0.0.0.0", 12321, Event);
+    SocketServer::SOCKET_ID l6 = s.Listen6("::", 12322, Event);
+
+    s.SetWriteReportThreshold(l4, 2000);
+    s.SetWriteReportThreshold(l6, 2000);
 
     loop.Loop();
 
