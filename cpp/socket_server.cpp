@@ -36,11 +36,8 @@ static union  {
 static constexpr size_t SOCKADDR_BUFFER_SIZE = sizeof(sockaddr_in_all);
 
 static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
-    char *ret = strncpy(dst, src, n);
-    if(n > 0) {
-        dst[n - 1] = '\0';
-    }
-    return ret;
+    snprintf(dst, n, "%s", src);
+    return dst;
 }
 
 static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, size_t size) {
