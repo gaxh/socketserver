@@ -26,6 +26,10 @@ namespace Net
         public int Offset; // 从第Offset个字节开始发送
         public int Size; // 一共发送Size个字节
         public System.Net.EndPoint UdpAddr; // udp目标地址
+
+        public int DataSize() {
+            return Offset + Size;
+        }
     }
 
     public class SocketCloseReason
@@ -43,6 +47,7 @@ namespace Net
         OPEN,
         CLOSE,
         READ,
+        WRITE_REPORT_THRESHOLD,
     }
 
     public class SocketEvent
@@ -59,6 +64,7 @@ namespace Net
             CloseReason = 0;
             ListenerId = Const.InvalidSocketId;
             FromAddress = null;
+            AboveThreshold = false;
         }
 
         public SocketServer Server;
@@ -77,6 +83,9 @@ namespace Net
 
         // udp
         public System.Net.IPEndPoint FromAddress;
+
+        // 写缓冲是否超过设定的阈值
+        public bool AboveThreshold;
     }
 
     public delegate void SocketEventCallback(SocketEvent evt);
@@ -88,11 +97,16 @@ namespace Net
         public System.Net.IPEndPoint Address;
         public SocketStatusEnum Status;
         public GENERIC.Queue<WriteBuffer> WriteList = new GENERIC.Queue<WriteBuffer>();
+        public int WriteDataSize = 0;
 
         public SocketEventCallback Cb;
         public bool Closed = false;
         public ulong ListenerId = Const.InvalidSocketId;
         public bool UDP = false;
+
+        public int WriteReportThreshold = int.MaxValue;
+        public int LastReportedWriteThreshold = 0;
+        public bool LastReportedWriteAboveThreshold = false;
 
         public override string ToString() {
             return string.Format("(socket id={0},addr={1},stat={2})", Id, Address, Status);
@@ -110,6 +124,7 @@ namespace Net
 
                     SocketHelper.SendTo(Fd, wb.Array, wb.Offset, wb.Size, wb.UdpAddr);
 
+                    WriteDataSize -= wb.DataSize();
                     WriteList.Dequeue();
                 }
             } else {
@@ -127,6 +142,7 @@ namespace Net
                         wb.Size -= ret;
                     }
 
+                    WriteDataSize -= wb.DataSize();
                     WriteList.Dequeue();
                 }
             }
@@ -334,6 +350,15 @@ namespace Net
             return socket_event;
         }
 
+        SocketEvent MakeWriteReportThresholdEvent(Socket socket, bool above_threshold) {
+            socket_event.Reset(this, SocketEventEnum.WRITE_REPORT_THRESHOLD);
+            socket_event.Id = socket.Id;
+            socket_event.Address = socket.Address;
+            socket_event.ListenerId = socket.ListenerId;
+            socket_event.AboveThreshold = above_threshold;
+            return socket_event;
+        }
+
         void ForceClose(Socket socket) {
             socket_poll.Remove(socket.Fd);
             socket.Close();
@@ -372,9 +397,12 @@ namespace Net
                                 }
                             }
 
+                            socket.WriteDataSize -= wb.DataSize();
                             socket.WriteList.Dequeue();
                         }
                         socket_poll.Modify(socket.Fd, socket, true, false);
+
+                        TriggerWriteReport(socket);
                         return;
                     }
                 case SocketStatusEnum.Connecting: {
@@ -406,10 +434,13 @@ namespace Net
                                 return;
                             }
 
+                            socket.WriteDataSize -= wb.DataSize();
                             socket.WriteList.Dequeue();
                         }
 
                         socket_poll.Modify(socket.Fd, socket, true, false);
+
+                        TriggerWriteReport(socket);
                         return;
                     }
                 default:
@@ -524,8 +555,11 @@ namespace Net
                 }
             }
 
+            socket.WriteDataSize += wb.DataSize();
             socket.WriteList.Enqueue(wb);
             socket_poll.Modify(socket.Fd, socket, true, true);
+
+            TriggerWriteReport(socket);
         }
 
         public void Close(ulong id, bool call_cb = true, int close_reason = SocketCloseReason.MANUALLY_CLOSED) {
@@ -732,6 +766,39 @@ namespace Net
             SendBuffer(socket, wb);
         }
 
+        public void SetWriteReportThreshold(ulong id, int threshold) {
+            Socket socket = GetSocketObject(id);
+
+            if (socket == null) {
+                Log.Logger.ErrorFormat("SetWriteReportThreshold failed: id {0} not exist", id);
+                return;
+            }
+
+            socket.WriteReportThreshold = threshold;
+        }
+
+        void TriggerWriteReport(Socket socket) {
+            if (socket.LastReportedWriteThreshold == socket.WriteReportThreshold) {
+                if (!socket.LastReportedWriteAboveThreshold && socket.WriteDataSize < socket.WriteReportThreshold) {
+                    return;
+                } else if (socket.LastReportedWriteAboveThreshold && socket.WriteDataSize >= socket.WriteReportThreshold) {
+                    return;
+                }
+            }
+
+            socket.LastReportedWriteThreshold = socket.WriteReportThreshold;
+
+            if (socket.WriteDataSize < socket.WriteReportThreshold) {
+                socket.LastReportedWriteAboveThreshold = false;
+
+                socket.Callback(MakeWriteReportThresholdEvent(socket, false));
+            } else {
+                socket.LastReportedWriteAboveThreshold = true;
+
+                socket.Callback(MakeWriteReportThresholdEvent(socket, true));
+            }
+        }
+
         Socket GetSocketObject(ulong id) {
             return sockets.TryGetValue(id, out Socket obj) ? obj : null;
         }
@@ -769,6 +836,10 @@ namespace Net
             while (!exit && !s_exit) {
                 int n = server.Update();
 
+                if (m_loop_cb != null) {
+                    n += m_loop_cb();
+                }
+
                 if (n <= 0) {
                     System.Threading.Thread.Sleep(10);
                 }
@@ -779,11 +850,19 @@ namespace Net
             exit = true;
         }
 
+        public void LoopCall(LoopCallback cb) {
+            m_loop_cb = cb;
+        }
+
         SocketServer server;
         bool exit = true;
         static bool s_exit = true;
+
+        public delegate int LoopCallback();
+        LoopCallback m_loop_cb;
     }
 }
+
 
 
 
