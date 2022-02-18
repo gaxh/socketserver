@@ -158,29 +158,29 @@ static inline bool extract_sockaddr(SOCKET_ADDRESS_MY &addr, const struct sockad
 }
 
 static inline const UDP_IDENTIFIER *copy_udp_identifier(void *buffer, size_t *size, const UDP_IDENTIFIER *udp_addr) {
-    if(*size < SocketServer::UDP_IDENTIFIER_SIZE || udp_addr == NULL) {
+    if(*size < SOCKADDR_BUFFER_SIZE || udp_addr == NULL) {
         return NULL;
     }
-    memcpy(buffer, udp_addr, SocketServer::UDP_IDENTIFIER_SIZE);
-    *size = SocketServer::UDP_IDENTIFIER_SIZE;
+    memcpy(buffer, udp_addr, SOCKADDR_BUFFER_SIZE);
+    *size = SOCKADDR_BUFFER_SIZE;
     return (const UDP_IDENTIFIER *)buffer;
 }
 
 static inline const UDP_IDENTIFIER *make_udp_identifier(void *buffer, size_t *size, const SOCKET_ADDRESS_MY &addr) {
-    if(*size < SocketServer::UDP_IDENTIFIER_SIZE) {
+    if(*size < SOCKADDR_BUFFER_SIZE) {
         return NULL;
     }
 
-    char sa_buffer[SocketServer::UDP_IDENTIFIER_SIZE];
-    memset(sa_buffer, 0, SocketServer::UDP_IDENTIFIER_SIZE);
+    char sa_buffer[SOCKADDR_BUFFER_SIZE];
+    memset(sa_buffer, 0, SOCKADDR_BUFFER_SIZE);
     socklen_t sa_size = sizeof(sa_buffer);
 
     if(!make_sockaddr((struct sockaddr *)sa_buffer, &sa_size, addr)) {
         return NULL;
     }
 
-    *size = SocketServer::UDP_IDENTIFIER_SIZE;
-    memcpy(buffer, sa_buffer, SocketServer::UDP_IDENTIFIER_SIZE);
+    *size = SOCKADDR_BUFFER_SIZE;
+    memcpy(buffer, sa_buffer, SOCKADDR_BUFFER_SIZE);
     return (const UDP_IDENTIFIER *)buffer;
 }
 
