@@ -35,16 +35,19 @@ static union  {
 
 static constexpr size_t SOCKADDR_BUFFER_SIZE = sizeof(sockaddr_in_all);
 
+typedef int FD_TYPE;
+static constexpr FD_TYPE INVALID_FD = -1;
+
 static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
     snprintf(dst, n, "%s", src);
     return dst;
 }
 
-static inline void close_fd(int fd) {
+static inline void close_fd(FD_TYPE fd) {
     close(fd);
 }
 
-static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, size_t size) {
+static inline ssize_t send_nonblock(FD_TYPE fd, const void *buffer, size_t offset, size_t size) {
     ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, 0);
 
     if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
@@ -54,7 +57,7 @@ static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, s
     return sent_bytes;
 }
 
-static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t size) {
+static inline ssize_t recv_nonblock(FD_TYPE fd, void *buffer, size_t offset, size_t size) {
     ssize_t recv_bytes = recv(fd, (char *)buffer + offset, size, 0);
 
     if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
@@ -64,7 +67,7 @@ static inline ssize_t recv_nonblock(int fd, void *buffer, size_t offset, size_t 
     return recv_bytes;
 }
 
-static inline ssize_t sendto_nonblock(int fd, const void *buffer, size_t offset, size_t size, struct sockaddr *to_addr, socklen_t to_addr_len) {
+static inline ssize_t sendto_nonblock(FD_TYPE fd, const void *buffer, size_t offset, size_t size, struct sockaddr *to_addr, socklen_t to_addr_len) {
     ssize_t sent_bytes = sendto(fd, (const char *)buffer + offset, size, 0, to_addr, to_addr_len);
 
     if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
@@ -78,7 +81,7 @@ static inline ssize_t sendto_nonblock(int fd, const void *buffer, size_t offset,
     return sent_bytes;
 }
 
-static inline ssize_t recvfrom_nonblock(int fd, void *buffer, size_t offset, size_t size, struct sockaddr *from_addr, socklen_t *from_addr_len) {
+static inline ssize_t recvfrom_nonblock(FD_TYPE fd, void *buffer, size_t offset, size_t size, struct sockaddr *from_addr, socklen_t *from_addr_len) {
     ssize_t recv_bytes = recvfrom(fd, (char *)buffer + offset, size, 0, from_addr, from_addr_len);
 
     if(recv_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR )) {
@@ -274,7 +277,7 @@ struct SocketWriteBuffer {
 
 struct Socket {
     SOCKET_ID ID;
-    int FD;
+    FD_TYPE FD;
     SOCKET_ADDRESS_MY ADDR;
     SocketStatusEnum STATUS;
     std::queue<SocketWriteBuffer> WRITE_LIST;
@@ -375,17 +378,17 @@ public:
 
     void Init() {
         m_ep = epoll_create(1024);
-        if(m_ep == -1) {
+        if(m_ep == INVALID_FD) {
             SOCKET_SERVER_ERROR("epoll: create failed, error=%d", errno);
         }
     }
 
     void Destroy() {
         close_fd(m_ep);
-        m_ep = -1;
+        m_ep = INVALID_FD;
     }
 
-    void Add(int fd, USERDATA_TYPE *ud, bool eread, bool ewrite) {
+    void Add(FD_TYPE fd, USERDATA_TYPE *ud, bool eread, bool ewrite) {
         struct epoll_event e;
         e.events = (eread ? EPOLLIN : 0) + (ewrite ? EPOLLOUT : 0);
         e.data.ptr = ud;
@@ -394,13 +397,13 @@ public:
         }
     }
 
-    void Remove(int fd) {
+    void Remove(FD_TYPE fd) {
         if(epoll_ctl(m_ep, EPOLL_CTL_DEL, fd, NULL)) {
             SOCKET_SERVER_ERROR("epoll: del fd failed, error=%d", errno);
         }
     }
 
-    void Modify(int fd, USERDATA_TYPE *ud, bool eread, bool ewrite) {
+    void Modify(FD_TYPE fd, USERDATA_TYPE *ud, bool eread, bool ewrite) {
         struct epoll_event e;
         e.events = (eread ? EPOLLIN : 0) + (ewrite ? EPOLLOUT : 0);
         e.data.ptr = ud;
@@ -429,7 +432,7 @@ public:
     }
 
 private:
-    int m_ep = -1;
+    FD_TYPE m_ep = INVALID_FD;
 };
 
 // socket server implementation
@@ -542,7 +545,7 @@ public:
     }
 
     SOCKET_ID Connect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
-        int fd = -1;
+        FD_TYPE fd = INVALID_FD;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
@@ -556,7 +559,7 @@ public:
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
-        if(fd == -1) {
+        if(fd == INVALID_FD) {
             SOCKET_SERVER_ERROR("Connect: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
@@ -600,14 +603,14 @@ public:
         }
 
 failed:
-        if(fd != -1) {
+        if(fd != INVALID_FD) {
             close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
 
     SOCKET_ID Listen(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
-        int fd = -1;
+        FD_TYPE fd = INVALID_FD;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
@@ -621,7 +624,7 @@ failed:
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0);
-        if(fd == -1) {
+        if(fd == INVALID_FD) {
             SOCKET_SERVER_ERROR("Listen: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
@@ -633,10 +636,7 @@ failed:
             goto failed;
         }
 
-        {
-            int opt = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        }
+        MakeReuseAddr(fd);
 
         ret = bind(fd, sa, sa_size);
         if(ret != 0) {
@@ -675,14 +675,14 @@ failed:
         }
 
 failed:
-        if(fd != -1) {
+        if(fd != INVALID_FD) {
             close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
 
     SOCKET_ID UdpBind(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
-        int fd = -1;
+        FD_TYPE fd = INVALID_FD;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
@@ -696,7 +696,7 @@ failed:
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 0);
-        if(fd == -1) {
+        if(fd == INVALID_FD) {
             SOCKET_SERVER_ERROR("Udp Bind: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
@@ -708,10 +708,7 @@ failed:
             goto failed;
         }
 
-        {
-            int opt = 1;
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-        }
+        MakeReuseAddr(fd);
 
         ret = bind(fd, sa, sa_size);
         if(ret != 0) {
@@ -744,14 +741,14 @@ failed:
         }
 
 failed:
-        if(fd != -1) {
+        if(fd != INVALID_FD) {
             close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
 
     SOCKET_ID UdpConnect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
-        int fd = -1;
+        FD_TYPE fd = INVALID_FD;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
         struct sockaddr *sa = (struct sockaddr *)sa_buffer;
@@ -765,7 +762,7 @@ failed:
         }
 
         fd = socket(addr.V6 ? AF_INET6 : AF_INET, SOCK_DGRAM, 0);
-        if(fd == -1) {
+        if(fd == INVALID_FD) {
             SOCKET_SERVER_ERROR("Udp Connect: failed to create socket, ip=%s, port=%hu, error=%d",
                     addr.IP, addr.PORT, errno);
             goto failed;
@@ -806,7 +803,7 @@ failed:
             goto failed;
         }
 failed:
-        if(fd != -1) {
+        if(fd != INVALID_FD) {
             close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
@@ -1006,7 +1003,7 @@ private:
         }
     }
 
-    bool MakeNonblocking(int fd) {
+    bool MakeNonblocking(FD_TYPE fd) {
         int flags = fcntl(fd, F_GETFL, 0);
         if(flags == -1) {
             return false;
@@ -1014,6 +1011,11 @@ private:
 
         flags = flags | O_NONBLOCK;
         return fcntl(fd, F_SETFL, flags) != -1;
+    }
+
+    void MakeReuseAddr(FD_TYPE fd) {
+        int opt = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     }
 
     SOCKET_ID NextSocketId() {
@@ -1153,7 +1155,7 @@ private:
         switch(so->STATUS) {
             case SOCKET_STATUS_LISTENING:
                 {
-                    int fd;
+                    FD_TYPE fd;
                     SOCKET_ADDRESS_MY addr;
 
                     char sa_buffer[SOCKADDR_BUFFER_SIZE];
@@ -1162,7 +1164,7 @@ private:
                     struct sockaddr *sa = (struct sockaddr *)sa_buffer;
 
                     fd = accept(so->FD, sa, &slen);
-                    if(fd == -1) {
+                    if(fd == INVALID_FD) {
                         SOCKET_SERVER_ERROR("accept failed, socket=%s, error=%d", so->Dump().c_str(), errno);
                         return;
                     }
