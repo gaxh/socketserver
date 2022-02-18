@@ -23,7 +23,7 @@
 
 using SOCKET_ID = SocketServer::SOCKET_ID;
 using SOCKET_CLOSE_REASON = SocketServer::SOCKET_CLOSE_REASON;
-using SOCKET_ADDRESS = SocketServer::SOCKET_ADDRESS;
+using SOCKET_ADDRESS_MY = SocketServer::SOCKET_ADDRESS;
 using SOCKET_EVENT = SocketServer::SOCKET_EVENT;
 using SOCKET_EVENT_CALLBACK = SocketServer::SOCKET_EVENT_CALLBACK;
 using UDP_IDENTIFIER = SocketServer::UDP_IDENTIFIER;
@@ -105,7 +105,7 @@ static std::string hex_repr(const void *buffer, size_t offset, size_t size) {
 
 // struct sockaddr
 
-static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const SOCKET_ADDRESS &addr) {
+static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const SOCKET_ADDRESS_MY &addr) {
     if(addr.V6) {
         struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)sa;
         socklen_t size = sizeof(sa6[0]);
@@ -135,7 +135,7 @@ static inline bool make_sockaddr(struct sockaddr *sa, socklen_t *sa_size, const 
     }
 }
 
-static inline bool extract_sockaddr(SOCKET_ADDRESS &addr, const struct sockaddr *sa, socklen_t sa_size) {
+static inline bool extract_sockaddr(SOCKET_ADDRESS_MY &addr, const struct sockaddr *sa, socklen_t sa_size) {
     if(sa_size >= sizeof(struct sockaddr_in6) && sa->sa_family == AF_INET6) {
         struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)sa;
 
@@ -166,7 +166,7 @@ static inline const UDP_IDENTIFIER *copy_udp_identifier(void *buffer, size_t *si
     return (const UDP_IDENTIFIER *)buffer;
 }
 
-static inline const UDP_IDENTIFIER *make_udp_identifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr) {
+static inline const UDP_IDENTIFIER *make_udp_identifier(void *buffer, size_t *size, const SOCKET_ADDRESS_MY &addr) {
     if(*size < SocketServer::UDP_IDENTIFIER_SIZE) {
         return NULL;
     }
@@ -271,7 +271,7 @@ struct SocketWriteBuffer {
 struct Socket {
     SOCKET_ID ID;
     int FD;
-    SOCKET_ADDRESS ADDR;
+    SOCKET_ADDRESS_MY ADDR;
     SocketStatusEnum STATUS;
     std::queue<SocketWriteBuffer> WRITE_LIST;
     size_t WRITE_DATA_SIZE = 0;
@@ -536,7 +536,7 @@ public:
         ForceClose(so);
     }
 
-    SOCKET_ID Connect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    SOCKET_ID Connect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
@@ -601,7 +601,7 @@ failed:
         return SocketServer::INVALID_SOCKET_ID;
     }
 
-    SOCKET_ID Listen(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    SOCKET_ID Listen(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
@@ -676,7 +676,7 @@ failed:
         return SocketServer::INVALID_SOCKET_ID;
     }
 
-    SOCKET_ID UdpBind(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    SOCKET_ID UdpBind(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
@@ -745,7 +745,7 @@ failed:
         return SocketServer::INVALID_SOCKET_ID;
     }
 
-    SOCKET_ID UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+    SOCKET_ID UdpConnect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
         int fd = -1;
         char sa_buffer[SOCKADDR_BUFFER_SIZE];
         memset(sa_buffer, 0, sizeof(sa_buffer));
@@ -807,7 +807,7 @@ failed:
         return SocketServer::INVALID_SOCKET_ID;
     }
 
-    void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size) {
+    void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS_MY &to_addr, const void *array, size_t offset, size_t size) {
         if(size == 0) {
             return;
         }
@@ -836,7 +836,7 @@ failed:
         SendBuffer(so, std::move(buffer));
     }
 
-    void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+    void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS_MY &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
         if(size == 0) {
             if(free_cb) {free_cb(array);}
             return;
@@ -1054,7 +1054,7 @@ private:
         return m_event;
     }
 
-    const SOCKET_EVENT &MakeUdpReadEvent(Socket *so, const void *array, size_t offset, size_t size, const SOCKET_ADDRESS *from_addr, const UDP_IDENTIFIER *from_udp_id) {
+    const SOCKET_EVENT &MakeUdpReadEvent(Socket *so, const void *array, size_t offset, size_t size, const SOCKET_ADDRESS_MY *from_addr, const UDP_IDENTIFIER *from_udp_id) {
         ResetSocketEvent(m_event, m_server, SocketServer::SOCKET_EVENT_READ);
 
         m_event.ID = so->ID;
@@ -1149,7 +1149,7 @@ private:
             case SOCKET_STATUS_LISTENING:
                 {
                     int fd;
-                    SOCKET_ADDRESS addr;
+                    SOCKET_ADDRESS_MY addr;
 
                     char sa_buffer[SOCKADDR_BUFFER_SIZE];
                     memset(sa_buffer, 0, sizeof(sa_buffer));
@@ -1230,7 +1230,7 @@ private:
                     ssize_t recv_bytes = recvfrom_nonblock(so->FD, m_readbuffer, 0, sizeof(m_readbuffer), (struct sockaddr *)sa_buffer, &sa_len);
 
                     if(recv_bytes > 0) {
-                        SOCKET_ADDRESS addr;
+                        SOCKET_ADDRESS_MY addr;
 
                         if(!extract_sockaddr(addr, (const struct sockaddr *)sa_buffer, sa_len)) {
                             SOCKET_SERVER_ERROR("UDP READ: extract sockaddr failed, socket=%s", so->Dump().c_str());
@@ -1377,16 +1377,16 @@ void SocketServer::Close(SOCKET_ID id, bool call_cb, int close_reason) {
     m_impl->Close(id, call_cb, close_reason);
 }
 
-SOCKET_ID SocketServer::Connect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+SOCKET_ID SocketServer::Connect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
     return m_impl->Connect(addr, cb);
 }
 
-SOCKET_ID SocketServer::Listen(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+SOCKET_ID SocketServer::Listen(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
     return m_impl->Listen(addr, cb);
 }
 
 SOCKET_ID SocketServer::Connect4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb) {
-    SOCKET_ADDRESS addr;
+    SOCKET_ADDRESS_MY addr;
     strncpy_safe(addr.IP, ip, sizeof(addr.IP));
     addr.PORT = port;
     addr.V6 = false;
@@ -1395,7 +1395,7 @@ SOCKET_ID SocketServer::Connect4(const char *ip, uint16_t port, SOCKET_EVENT_CAL
 }
 
 SOCKET_ID SocketServer::Connect6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb) {
-    SOCKET_ADDRESS addr;
+    SOCKET_ADDRESS_MY addr;
     strncpy_safe(addr.IP, ip, sizeof(addr.IP));
     addr.PORT = port;
     addr.V6 = true;
@@ -1404,7 +1404,7 @@ SOCKET_ID SocketServer::Connect6(const char *ip, uint16_t port, SOCKET_EVENT_CAL
 }
 
 SOCKET_ID SocketServer::Listen4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb) {
-    SOCKET_ADDRESS addr;
+    SOCKET_ADDRESS_MY addr;
     strncpy_safe(addr.IP, ip, sizeof(addr.IP));
     addr.PORT = port;
     addr.V6 = false;
@@ -1413,7 +1413,7 @@ SOCKET_ID SocketServer::Listen4(const char *ip, uint16_t port, SOCKET_EVENT_CALL
 }
 
 SOCKET_ID SocketServer::Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb) {
-    SOCKET_ADDRESS addr;
+    SOCKET_ADDRESS_MY addr;
     strncpy_safe(addr.IP, ip, sizeof(addr.IP));
     addr.PORT = port;
     addr.V6 = true;
@@ -1421,19 +1421,19 @@ SOCKET_ID SocketServer::Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALL
     return Listen(addr, cb);
 }
 
-SOCKET_ID SocketServer::UdpBind(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+SOCKET_ID SocketServer::UdpBind(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
     return m_impl->UdpBind(addr, cb);
 }
 
-SOCKET_ID SocketServer::UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb) {
+SOCKET_ID SocketServer::UdpConnect(const SOCKET_ADDRESS_MY &addr, SOCKET_EVENT_CALLBACK cb) {
     return m_impl->UdpConnect(addr, cb);
 }
 
-void SocketServer::SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size) {
+void SocketServer::SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS_MY &to_addr, const void *array, size_t offset, size_t size) {
     m_impl->SendUdpCopy(id, to_addr, array, offset, size);
 }
 
-void SocketServer::SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
+void SocketServer::SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS_MY &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb) {
     m_impl->SendUdpNocopy(id, to_addr, array, offset, size, free_cb);
 }
 
@@ -1449,7 +1449,7 @@ const UDP_IDENTIFIER *SocketServer::CopyUdpIdentifier(void *buffer, size_t *size
     return copy_udp_identifier(buffer, size, udp_addr);
 }
 
-const UDP_IDENTIFIER *SocketServer::MakeUdpIdentifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr) {
+const UDP_IDENTIFIER *SocketServer::MakeUdpIdentifier(void *buffer, size_t *size, const SOCKET_ADDRESS_MY &addr) {
     return make_udp_identifier(buffer, size, addr);
 }
 
