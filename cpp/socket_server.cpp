@@ -40,6 +40,10 @@ static inline char *strncpy_safe(char *dst, const char *src, size_t n) {
     return dst;
 }
 
+static inline void close_fd(int fd) {
+    close(fd);
+}
+
 static inline ssize_t send_nonblock(int fd, const void *buffer, size_t offset, size_t size) {
     ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, 0);
 
@@ -331,7 +335,7 @@ struct Socket {
     }
 
     void Close() {
-        close(FD);
+        close_fd(FD);
         while(WRITE_LIST.size()) {
             SocketWriteBuffer &buffer = WRITE_LIST.front();
 
@@ -342,10 +346,11 @@ struct Socket {
         CLOSED = true;
 
         // check WRITE_DATA_SIZE, debug only
-        // TODO
+        /*
         if(WRITE_DATA_SIZE != 0) {
             SOCKET_SERVER_ERROR("Close: socket write buffer is not empty: %llu", ID);
         }
+        */
     }
 
     void Callback(const SOCKET_EVENT &e) {
@@ -376,7 +381,7 @@ public:
     }
 
     void Destroy() {
-        close(m_ep);
+        close_fd(m_ep);
         m_ep = -1;
     }
 
@@ -596,7 +601,7 @@ public:
 
 failed:
         if(fd != -1) {
-            close(fd);
+            close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
@@ -671,7 +676,7 @@ failed:
 
 failed:
         if(fd != -1) {
-            close(fd);
+            close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
@@ -740,7 +745,7 @@ failed:
 
 failed:
         if(fd != -1) {
-            close(fd);
+            close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
@@ -802,7 +807,7 @@ failed:
         }
 failed:
         if(fd != -1) {
-            close(fd);
+            close_fd(fd);
         }
         return SocketServer::INVALID_SOCKET_ID;
     }
@@ -1164,7 +1169,7 @@ private:
 
                     if(!extract_sockaddr(addr, sa, slen)) {
                         SOCKET_SERVER_ERROR("accept failed, socket=%s, extract sockaddr failed", so->Dump().c_str());
-                        close(fd);
+                        close_fd(fd);
                         return;
                     }
 
@@ -1173,7 +1178,7 @@ private:
                     if(m_sockets.count(id)) {
                         SOCKET_SERVER_ERROR("Accept: alloced id has been used, socket=%s, ip=%s, port=%hu, error=%d",
                                 so->Dump().c_str(), addr.IP, addr.PORT, errno);
-                        close(fd);
+                        close_fd(fd);
                         return;
                     }
 
