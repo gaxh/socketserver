@@ -937,6 +937,34 @@ failed:
         so->WRITE_REPORT_THRESHOLD = threshold;
     }
 
+    int SetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t optlen) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("SetSocketOpt: failed to get socket object: %llu", id);
+            return -1;
+        }
+
+        return setsockopt(so->FD, level, optname, opt, optlen);
+    }
+
+    int GetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t *optlen) {
+        Socket *so = GetSocketObject(id);
+
+        if(!so) {
+            SOCKET_SERVER_ERROR("GetSocketOpt: failed to get socket object: %llu", id);
+            return -1;
+        }
+
+        socklen_t socklen = (socklen_t)*optlen;
+
+        int rv = getsockopt(so->FD, level, optname, opt, &socklen);
+
+        *optlen = socklen;
+
+        return rv;
+    }
+
 private:
     SocketServerPoller<Socket> m_poller;
     static constexpr int POLL_EVENT_CAPACITY = 128;
@@ -1462,6 +1490,14 @@ const UDP_IDENTIFIER *SocketServer::MakeUdpIdentifier(void *buffer, size_t *size
 
 void SocketServer::SetWriteReportThreshold(SOCKET_ID id, size_t threshold) {
     m_impl->SetWriteReportThreshold(id, threshold);
+}
+
+int SocketServer::SetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t optlen) {
+    return m_impl->SetSocketOpt(id, level, optname, opt, optlen);
+}
+
+int SocketServer::GetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t *optlen) {
+    return m_impl->GetSocketOpt(id, level, optname, opt, optlen);
 }
 
 const size_t SocketServer::UDP_IDENTIFIER_SIZE = SOCKADDR_BUFFER_SIZE;

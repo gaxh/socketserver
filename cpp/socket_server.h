@@ -89,6 +89,10 @@ public:
 
     SOCKET_ID UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb);
 
+    int SetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t optlen);
+
+    int GetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t *optlen);
+
     void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size);
 
     void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
