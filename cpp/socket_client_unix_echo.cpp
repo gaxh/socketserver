@@ -30,26 +30,16 @@ int main() {
     s->Init(1024);
 
     SocketAddressNatural address;
-    address.type = SocketAddressType::IPV4;
-    strcpy(address.ipaddr4.ip, "127.0.0.1");
-    address.ipaddr4.port = 12321;
+    address.type = SocketAddressType::UNIX;
+    strcpy(address.unixaddr.path, "/tmp/socket_server_unix_echo.socket");
 
     SocketId s4 = s->Connect(ConvertSocketAddress(&address), Event);
-
-    address.type = SocketAddressType::IPV6;
-    strcpy(address.ipaddr6.ip, "::1");
-    address.ipaddr6.port = 12322;
-    address.ipaddr6.flow = 0;
-    address.ipaddr6.scope = 0;
-
-    SocketId s6 = s->Connect(ConvertSocketAddress(&address), Event);
 
     char buffer[1024];
 
     snprintf(buffer, sizeof(buffer), "BEGIN");
 
     s->SendCopy(s4, buffer, strlen(buffer));
-    s->SendCopy(s6, buffer, strlen(buffer));
 
     loop.Loop();
 

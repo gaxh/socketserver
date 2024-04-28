@@ -1,22 +1,26 @@
 #include "socket_server.h"
+#include "socket_server_loop.h"
 #include <stdio.h>
+#include <string.h>
 
-#define LOG(fmt, args...) printf("[%s:%d:%s]" fmt "\n", __FILE__, __LINE__, __FUNCTION__, ##args)
+using namespace socketserver;
 
-static void Event(const SocketServer::SOCKET_EVENT &e) {
-    switch(e.EVENT) {
-        case SocketServer::SOCKET_EVENT_OPEN:
-            LOG("Connected: id=%llu, ip=%s, port=%hu, v6=%d, lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.LISTENER_ID);
+#define LOG(fmt, args...) printf("[%s:%d:%s] " fmt "\n", __FILE__, __LINE__, __FUNCTION__, ##args)
+
+static void Event(const SocketEvent &e) {
+    switch(e.event) {
+        case SocketEventType::OPEN:
+            LOG("Connected: id=%llu, addr=%s, lid=%llu", e.id, DumpSocketAddress(e.addr).c_str(), e.listener_id);
             break;
-        case SocketServer::SOCKET_EVENT_CLOSE:
-            LOG("Disconnected: id=%llu, ip=%s, port=%hu, v6=%d, reason=%d, lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.CLOSE_REASON, e.LISTENER_ID);
+        case SocketEventType::CLOSE:
+            LOG("Disconnected: id=%llu, addr=%s, reason=%d, lid=%llu", e.id, DumpSocketAddress(e.addr).c_str(), e.close_event.close_reason, e.listener_id);
             break;
-        case SocketServer::SOCKET_EVENT_READ:
-            LOG("Received: id=%llu, ip=%s, port=%hu, v6=%d, size=%zu, data=(%s), lid=%llu", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.SIZE, e.SIZE < 50 ? SocketServer::HexRepr(e.ARRAY, e.OFFSET, e.SIZE).c_str() : "<IGNORED>", e.LISTENER_ID);
-            e.SERVER->SendCopy(e.ID, e.ARRAY, e.OFFSET, e.SIZE);
+        case SocketEventType::READ:
+            LOG("Received: id=%llu, addr=%s, size=%zu, data=(%s), lid=%llu", e.id, DumpSocketAddress(e.addr).c_str(), e.read_event.size, e.read_event.size < 50 ? HexRepr(e.read_event.data, 0, e.read_event.size).c_str() : "<IGNORED>", e.listener_id);
+            e.server->SendCopy(e.id, e.read_event.data, e.read_event.size);
             break;
-        case SocketServer::SOCKET_EVENT_WRITE_REPORT_THRESHOLD:
-            LOG("WriteReportThreshold: id=%llu, ip=%s, port=%hu, v6=%d, lid=%llu, above=%d", e.ID, e.ADDR->IP, e.ADDR->PORT, e.ADDR->V6, e.LISTENER_ID, e.ABOVE_THRESHOLD);
+        case SocketEventType::WRITE_REPORT:
+            LOG("WriteReportThreshold: id=%llu, addr=%s, lid=%llu, above=%d", e.id, DumpSocketAddress(e.addr).c_str(), e.listener_id, e.write_report_event.above_threshold);
             break;
         default:
             break;
@@ -24,21 +28,34 @@ static void Event(const SocketServer::SOCKET_EVENT &e) {
 }
 
 int main() {
-    SocketServer s;
+    std::unique_ptr<SocketServerInterface> s = CreateSocketServerObject();
     SocketServerLoop loop;
-    loop.Init(&s);
+    loop.Init(s.get());
 
-    s.Init();
-    SocketServer::SOCKET_ID l4 = s.Listen4("0.0.0.0", 12321, Event);
-    SocketServer::SOCKET_ID l6 = s.Listen6("::", 12322, Event);
+    s->Init(1024);
 
-    s.SetWriteReportThreshold(l4, 1000);
-    s.SetWriteReportThreshold(l6, 1000);
+    SocketAddressNatural address;
+    address.type = SocketAddressType::IPV4;
+    strcpy(address.ipaddr4.ip, "0.0.0.0");
+    address.ipaddr4.port = 12321;
+
+    SocketId l4 = s->Listen(ConvertSocketAddress(&address), Event);
+
+    address.type = SocketAddressType::IPV6;
+    strcpy(address.ipaddr6.ip, "::");
+    address.ipaddr6.port = 12322;
+    address.ipaddr6.flow = 0;
+    address.ipaddr6.scope = 0;
+
+    SocketId l6 = s->Listen(ConvertSocketAddress(&address), Event);
+
+    s->SetWriteReportThreshold(l4, 1000);
+    s->SetWriteReportThreshold(l6, 1000);
 
     loop.Loop();
 
-    s.Destroy();
     loop.Destroy();
+    s->Destroy();
 
     return 0;
 }

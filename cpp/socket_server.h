@@ -4,125 +4,147 @@
 #include <stdint.h>
 #include <functional>
 #include <string>
+#include <memory>
 
-class SocketServer {
-public:
-    typedef unsigned long long SOCKET_ID;
-    static constexpr SOCKET_ID INVALID_SOCKET_ID = 0;
+namespace socketserver {
 
-    struct SOCKET_CLOSE_REASON {
-        static constexpr int MANULLY_CLOSED = -1;
-        static constexpr int CONNECT_FAILED = -2;
-        static constexpr int CLOSED_BY_PEER = -3;
-        static constexpr int READ_FAILED = -4;
-        static constexpr int WRITE_FAILED = -5;
-        static constexpr int SERVER_DESTROY = -6;
-    };
+typedef unsigned long long SocketId;
+constexpr SocketId SOCKET_ID_INVALID = (SocketId)-1;
 
-    struct SOCKET_ADDRESS {
-        char IP[64];
-        uint16_t PORT;
-        bool V6;
-    };
-
-    enum SocketEventEnum {
-        SOCKET_EVENT_OPEN,
-        SOCKET_EVENT_CLOSE,
-        SOCKET_EVENT_READ,
-        SOCKET_EVENT_WRITE_REPORT_THRESHOLD,
-    };
-
-    struct UDP_IDENTIFIER;
-
-    struct SOCKET_EVENT {
-        SocketServer *SERVER;
-        SocketEventEnum EVENT;
-        SOCKET_ID ID;
-        SOCKET_ID LISTENER_ID;
-        const SOCKET_ADDRESS *ADDR;
-        const void *ARRAY;
-        size_t OFFSET;
-        size_t SIZE;
-        int CLOSE_REASON;
-        const SOCKET_ADDRESS *FROM_ADDR;
-        const UDP_IDENTIFIER *FROM_UDP_ID; // 这是个临时值，只能在收到数据的回调里使用，在回调外无效。可以调用 CopyUdpIdentifier 把它拷贝出来使用
-        bool ABOVE_THRESHOLD; // 写缓冲大小是否超过设定的阈值
-    };
-
-    using SOCKET_EVENT_CALLBACK = typename std::function<void(const SOCKET_EVENT &e)>;
-
-public:
-    static std::string HexRepr(const void *buffer, size_t offset, size_t size);
-
-    static const size_t UDP_IDENTIFIER_SIZE;
-
-    static const UDP_IDENTIFIER *CopyUdpIdentifier(void *buffer, size_t *size, const UDP_IDENTIFIER *udp_addr);
-
-    static const UDP_IDENTIFIER *MakeUdpIdentifier(void *buffer, size_t *size, const SOCKET_ADDRESS &addr);
-
-public:
-    void Init();
-
-    void Destroy();
-
-    int Update();
-
-    void SendCopy(SOCKET_ID id, const void *array, size_t offset, size_t size);
-
-    void SendNocopy(SOCKET_ID id, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
-
-    void Close(SOCKET_ID id, bool call_cb = true, int close_reason = SOCKET_CLOSE_REASON::MANULLY_CLOSED);
-
-    SOCKET_ID Connect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID Listen(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID Connect4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID Connect6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID Listen4(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID Listen6(const char *ip, uint16_t port, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID UdpBind(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb);
-
-    SOCKET_ID UdpConnect(const SOCKET_ADDRESS &addr, SOCKET_EVENT_CALLBACK cb);
-
-    int SetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t optlen);
-
-    int GetSocketOpt(SOCKET_ID id, int level, int optname, void *opt, size_t *optlen);
-
-    void SendUdpCopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, const void *array, size_t offset, size_t size);
-
-    void SendUdpNocopy(SOCKET_ID id, const SOCKET_ADDRESS &to_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
-
-    void SendUdpCopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, const void *array, size_t offset, size_t size);
-
-    void SendUdpNocopy(SOCKET_ID id, const UDP_IDENTIFIER *to_udp_addr, void *array, size_t offset, size_t size, std::function<void(void *)> free_cb = NULL);
-
-    void SetWriteReportThreshold(SOCKET_ID id, size_t threshold);
-
-private:
-    class IMPL;
-    IMPL *m_impl = NULL;
+struct SocketCloseReason {
+    static constexpr int MANULLY_CLOSED = -1;
+    static constexpr int CONNECT_FAILED = -2;
+    static constexpr int CLOSED_BY_PEER = -3;
+    static constexpr int READ_FAILED = -4;
+    static constexpr int WRITE_FAILED = -5;
+    static constexpr int SERVER_DESTROY = -6;
 };
 
-class SocketServerLoop {
-public:
-    void Init(SocketServer *ss);
-    void Destroy();
-    void Loop();
-    void Exit();
-
-    using LOOP_CALLBACK = std::function<int()>;
-    void LoopCall(LOOP_CALLBACK cb);
-
-private:
-    SocketServer *m_ss = NULL;
-    bool m_exit = true;
-    static bool s_exit;
-    LOOP_CALLBACK m_loop_cb;
+enum class SocketAddressType : int {
+    IPV4,
+    IPV6,
+    UNIX,
 };
 
-#endif
+struct SocketAddressNatural {
+    SocketAddressType type;
+    union {
+        int __align__;
+        struct {
+            uint16_t port;
+            char ip[64];
+        } ipaddr4;
+        struct {
+            uint16_t port;
+            char ip[64];
+            uint32_t flow;
+            uint32_t scope;
+        } ipaddr6;
+        struct {
+            char path[108];
+        } unixaddr;
+    };
+};
+
+struct SocketAddress {
+    size_t length;
+    union {
+        int __align__;
+        char buffer[128u - sizeof(size_t)];
+    };
+};
+
+enum class SocketEventType : int {
+    OPEN,
+    CLOSE,
+    READ,
+    WRITE_REPORT,
+};
+
+class SocketServerInterface;
+
+struct SocketEvent {
+    SocketServerInterface *server;
+    SocketEventType event;
+    SocketId id;
+    const SocketAddress *addr;
+    SocketId listener_id;
+
+    union {
+        struct {
+        } open_event;
+        struct {
+            int close_reason;
+        } close_event;
+        struct {
+            size_t size;
+            const void *data;
+            const SocketAddress *from_addr;
+        } read_event;
+        struct {
+            size_t write_buffer_size;
+            bool above_threshold;
+        } write_report_event;
+    };
+};
+
+using SocketEventCallback = typename std::function<void(const SocketEvent &)>;
+
+using TimeoutCallback = typename std::function<void()>;
+
+class SocketServerInterface {
+public:
+    virtual ~SocketServerInterface() = default;
+
+    virtual bool Init(unsigned socket_capacity) = 0;
+
+    virtual void Destroy() = 0;
+
+    virtual int Update(unsigned wait_millisec) = 0;
+
+    virtual void Close(SocketId id, int close_reason) = 0;
+
+    virtual SocketId Listen(const SocketAddress &addr, SocketEventCallback cb) = 0;
+
+    virtual SocketId Connect(const SocketAddress &addr, SocketEventCallback cb) = 0;
+
+    virtual SocketId UdpBind(const SocketAddress &addr, SocketEventCallback cb) = 0;
+
+    virtual SocketId UdpConnect(const SocketAddress &addr, SocketEventCallback cb) = 0;
+
+    virtual SocketId SetTimeout(uint64_t millisec, TimeoutCallback cb) = 0;
+
+    virtual void CancelTimeout(SocketId id) = 0;
+
+    virtual void SendCopy(SocketId id, const void *data, size_t size) = 0;
+
+    virtual void SendNocopy(SocketId id, void *data, size_t offset, size_t size, std::function<void(void *)> free_cb) = 0;
+
+    virtual void SendtoCopy(SocketId id, const SocketAddress &to_addr, const void *data, size_t size) = 0;
+
+    virtual void SendtoNocopy(SocketId id, const SocketAddress &to_addr, void *data, size_t offset, size_t size, std::function<void(void *)> free_cb) = 0;
+
+    virtual void SetWriteReportThreshold(SocketId id, size_t threshold) = 0;
+
+    virtual int SetSocketOpt(SocketId id, int level, int optname, void *opt, size_t optlen) = 0;
+
+    virtual int GetSocketOpt(SocketId id, int level, int optname, void *opt, size_t *optlen) = 0;
+};
+
+std::unique_ptr<SocketServerInterface> CreateSocketServerObject();
+
+bool ConvertSocketAddress(SocketAddressNatural *sa_n, const SocketAddress *sa);
+
+bool ConvertSocketAddress(SocketAddress *sa, const SocketAddressNatural *sa_n);
+
+SocketAddressNatural ConvertSocketAddress(const SocketAddress *sa);
+
+SocketAddress ConvertSocketAddress(const SocketAddressNatural *sa_n);
+
+std::string DumpSocketAddress(const SocketAddress *sa);
+
+std::string HexRepr(const void *buffer, size_t offset, size_t size);
+
+} // namespace socketserver {
+
+#endif // #ifndef __SOCKET_SERVER_H__
