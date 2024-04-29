@@ -45,8 +45,7 @@ static_assert(sizeof(sa_n->unixaddr.path) == sizeof(saun->sun_path), "buffer siz
 static constexpr int FD_INVALID = -1;
 
 static void StrncpySafe(char *dst, const char *src, size_t n) {
-    strncpy(dst, src, n);
-    dst[n - 1u] = 0;
+    snprintf(dst, n, "%s", src);
 }
 
 static void CloseFd(int fd) {
@@ -1513,6 +1512,29 @@ std::unique_ptr<SocketServerInterface> CreateSocketServerObject() {
     return std::make_unique<SocketServerImpl>();
 }
 
+SocketAddress Ipv4Address(const char *ip, uint16_t port) {
+    SocketAddressNatural sa_n;
+    sa_n.type = SocketAddressType::IPV4;
+    sa_n.ipaddr4.port = port;
+    StrncpySafe(sa_n.ipaddr4.ip, ip, sizeof(sa_n.ipaddr4.ip));
+    return ConvertSocketAddress(&sa_n);
+}
 
+SocketAddress Ipv6Address(const char *ip, uint16_t port, uint32_t flow, uint32_t scope) {
+    SocketAddressNatural sa_n;
+    sa_n.type = SocketAddressType::IPV6;
+    sa_n.ipaddr6.port = port;
+    sa_n.ipaddr6.flow = flow;
+    sa_n.ipaddr6.scope = scope;
+    StrncpySafe(sa_n.ipaddr6.ip, ip, sizeof(sa_n.ipaddr6.ip));
+    return ConvertSocketAddress(&sa_n);
+}
+
+SocketAddress UnixAddress(const char *path) {
+    SocketAddressNatural sa_n;
+    sa_n.type = SocketAddressType::UNIX;
+    StrncpySafe(sa_n.unixaddr.path, path, sizeof(sa_n.unixaddr.path));
+    return ConvertSocketAddress(&sa_n);
+}
 
 } // namespace socketserver {

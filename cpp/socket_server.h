@@ -145,6 +145,12 @@ std::string DumpSocketAddress(const SocketAddress *sa);
 
 std::string HexRepr(const void *buffer, size_t offset, size_t size);
 
+SocketAddress Ipv4Address(const char *ip, uint16_t port);
+
+SocketAddress Ipv6Address(const char *ip, uint16_t port, uint32_t flow = 0, uint32_t scope = 0);
+
+SocketAddress UnixAddress(const char *path);
+
 } // namespace socketserver {
 
 #endif // #ifndef __SOCKET_SERVER_H__

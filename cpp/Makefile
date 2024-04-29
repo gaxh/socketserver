@@ -28,6 +28,8 @@ all : socket_server_unix_echo.exe
 
 all : socket_client_unix_echo.exe
 
+all : socket_server_echo_all.exe
+
 clean:
 	rm -f *.o
 	rm -f *.a
