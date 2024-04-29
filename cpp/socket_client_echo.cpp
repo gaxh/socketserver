@@ -24,8 +24,8 @@ static void Event(const SocketEvent &e) {
 
 int main() {
     std::unique_ptr<SocketServerInterface> s = CreateSocketServerObject();
-    SocketServerLoop loop;
-    loop.Init(s.get());
+
+    loop::Init(s.get());
 
     s->Init(1024);
 
@@ -51,9 +51,9 @@ int main() {
     s->SendCopy(s4, buffer, strlen(buffer));
     s->SendCopy(s6, buffer, strlen(buffer));
 
-    loop.Loop();
+    loop::Loop();
 
-    loop.Destroy();
+    loop::Destroy();
     s->Destroy();
 
     return 0;

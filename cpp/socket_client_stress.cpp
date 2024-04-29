@@ -35,8 +35,8 @@ static void StressSend(SocketServerInterface *s, std::vector<SocketId> socket_id
 
 int main() {
     std::unique_ptr<SocketServerInterface> s = CreateSocketServerObject();
-    SocketServerLoop loop;
-    loop.Init(s.get());
+
+    loop::Init(s.get());
 
     s->Init(1024);
 
@@ -66,8 +66,8 @@ int main() {
 
     s->SetTimeout(1000, std::bind(StressSend, s.get(), socket_ids, stress_count));
 
-    loop.Loop();
-    loop.Destroy();
+    loop::Loop();
+    loop::Destroy();
     s->Destroy();
 
     return 0;

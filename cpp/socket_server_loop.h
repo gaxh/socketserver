@@ -5,18 +5,14 @@
 
 namespace socketserver {
 
-class SocketServerLoop {
-public:
-    void Init(SocketServerInterface *);
-    void Destroy();
-    void Loop();
-    void Exit();
+namespace loop {
 
-private:
-    SocketServerInterface *m_ss = 0;
-    bool m_exit = true;
-    static bool s_exit;
-};
+void Init(SocketServerInterface *);
+void Destroy();
+void Loop();
+void Exit();
+
+}
 
 }
 
