@@ -86,7 +86,7 @@ static ssize_t RecvNonblock(int fd, void *buffer, size_t offset, size_t size) {
 }
 
 static ssize_t SendtoNonblock(int fd, const void *buffer, size_t offset, size_t size, const SocketAddress *sa) {
-    auto sa_length = (socklen_t)sa->length;
+    size_t sa_length = sa ? sa->length : 0;
     ssize_t sent_bytes = sendto(fd, (const char *)buffer + offset, size, 0,
             (sa_length != 0 ? (const SA_ANY *)sa->buffer : 0), sa_length);
 
@@ -748,7 +748,7 @@ public:
         SendBuffer(so, std::move(buffer));
     }
 
-    void SendtoCopy(SocketId id, const SocketAddress &to_addr, const void *data, size_t size) override {
+    void SendtoCopy(SocketId id, const SocketAddress *to_addr, const void *data, size_t size) override {
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -761,12 +761,17 @@ public:
         buffer.offset = 0;
         buffer.size = size;
         buffer.free_cb = FreeBuffer;
-        buffer.addr = to_addr;
+
+        if(to_addr) {
+            buffer.addr = *to_addr;
+        } else {
+            buffer.addr = {0};
+        }
 
         SendBuffer(so, std::move(buffer));
     }
 
-    void SendtoNocopy(SocketId id, const SocketAddress &to_addr, void *data, size_t offset, size_t size, std::function<void(void *)>) override {
+    void SendtoNocopy(SocketId id, const SocketAddress *to_addr, void *data, size_t offset, size_t size, std::function<void(void *)>) override {
         Socket *so = GetSocketObject(id);
 
         if(!so) {
@@ -779,7 +784,12 @@ public:
         buffer.offset = offset;
         buffer.size = size;
         buffer.free_cb = FreeBuffer;
-        buffer.addr = to_addr;
+
+        if(to_addr) {
+            buffer.addr = *to_addr;
+        } else {
+            buffer.addr = {0};
+        }
 
         SendBuffer(so, std::move(buffer));
     }

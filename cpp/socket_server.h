@@ -120,9 +120,9 @@ public:
 
     virtual void SendNocopy(SocketId id, void *data, size_t offset, size_t size, std::function<void(void *)> free_cb) = 0;
 
-    virtual void SendtoCopy(SocketId id, const SocketAddress &to_addr, const void *data, size_t size) = 0;
+    virtual void SendtoCopy(SocketId id, const SocketAddress *to_addr, const void *data, size_t size) = 0;
 
-    virtual void SendtoNocopy(SocketId id, const SocketAddress &to_addr, void *data, size_t offset, size_t size, std::function<void(void *)> free_cb) = 0;
+    virtual void SendtoNocopy(SocketId id, const SocketAddress *to_addr, void *data, size_t offset, size_t size, std::function<void(void *)> free_cb) = 0;
 
     virtual void SetWriteReportThreshold(SocketId id, size_t threshold) = 0;
 

@@ -19,7 +19,7 @@ static void Event(const SocketEvent &e) {
         size_t size = strlen(buffer);
         LOG("<ID=%llu, LID=%llu> SEND: size=%zu, data=(%s)", e.id, e.listener_id, size, HexRepr(buffer, 0, size).c_str());
         // e.server->SendCopy(e.id, buffer, strlen(buffer));
-        e.server->SendtoCopy(e.id, *e.read_event.from_addr, buffer, strlen(buffer));
+        e.server->SendtoCopy(e.id, e.read_event.from_addr, buffer, strlen(buffer));
     }
 }
 
