@@ -67,7 +67,7 @@ static bool MakeReuseAddr(int fd) {
 }
 
 static ssize_t SendNonblock(int fd, const void *buffer, size_t offset, size_t size) {
-    ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, 0);
+    ssize_t sent_bytes = send(fd, (const char *)buffer + offset, size, MSG_NOSIGNAL);
 
     if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
         return 0;
@@ -87,7 +87,7 @@ static ssize_t RecvNonblock(int fd, void *buffer, size_t offset, size_t size) {
 
 static ssize_t SendtoNonblock(int fd, const void *buffer, size_t offset, size_t size, const SocketAddress *sa) {
     size_t sa_length = sa ? sa->length : 0;
-    ssize_t sent_bytes = sendto(fd, (const char *)buffer + offset, size, 0,
+    ssize_t sent_bytes = sendto(fd, (const char *)buffer + offset, size, MSG_NOSIGNAL,
             (sa_length != 0 ? (const SA_ANY *)sa->buffer : 0), sa_length);
 
     if(sent_bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {

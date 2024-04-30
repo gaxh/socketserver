@@ -12,7 +12,6 @@ static bool s_exit = false;
 void Init(SocketServerInterface *ss) {
     s_ss = ss;
 
-    signal(SIGPIPE, SIG_IGN);
     signal(SIGINT, [](int s) { Exit(); });
 }
 
